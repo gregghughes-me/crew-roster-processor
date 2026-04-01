@@ -362,10 +362,15 @@ function xlsxToText(buf, name) {
       var rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
       out+='\n--- Sheet: '+sn+' ---\n';
       rows.forEach(function(row){
-        if(row.some(function(c){return c!=='';}))
-          out+=row.map(function(c){return String(c);}).join('\t')+'\n';
+        var cleaned=row.map(function(c){
+          var s=String(c);
+          return s.startsWith('=')?'':s;
+        });
+        if(cleaned.some(function(c){return c!=='';}))
+          out+=cleaned.join('\t')+'\n';
       });
     });
+    if(out.length>80000) out=out.substring(0,80000)+'\n[...truncated...]';
     return out;
   } catch(e){ return '[Could not read '+name+': '+e.message+']'; }
 }
