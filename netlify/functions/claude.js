@@ -90,10 +90,10 @@ exports.handler = async function(event) {
     // Clean the response body - strip markdown fences if present
     var responseBody = result.body;
     try {
-      var parsed = JSON.parse(responseBody);
+      var apiResp = JSON.parse(responseBody);
       // Already valid JSON from Anthropic wrapper - extract text content
-      if (parsed.content && parsed.content[0] && parsed.content[0].text) {
-        var text = parsed.content[0].text.trim();
+      if (apiResp.content && apiResp.content[0] && apiResp.content[0].text) {
+        var text = apiResp.content[0].text.trim();
         // Strip markdown fences from the text
         text = text.replace(/^```json\s*/im, '').replace(/^```\s*/im, '').replace(/```\s*$/m, '').trim();
         // Find the JSON object
@@ -103,8 +103,8 @@ exports.handler = async function(event) {
           text = text.substring(start, end + 1);
         }
         // Rebuild the response with cleaned text
-        parsed.content[0].text = text;
-        responseBody = JSON.stringify(parsed);
+        apiResp.content[0].text = text;
+        responseBody = JSON.stringify(apiResp);
       }
     } catch(e) { /* leave responseBody as-is */ }
 
