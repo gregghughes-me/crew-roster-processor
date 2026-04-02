@@ -50,8 +50,7 @@ exports.handler = async function(event) {
 
     parsed.model = 'claude-haiku-4-5-20251001';
     parsed.max_tokens = 8000;
-    // Use streaming to prevent inactivity timeout
-    parsed.stream = true;
+    delete parsed.stream; // ensure no streaming
 
     const postData = Buffer.from(JSON.stringify(parsed), 'utf8');
 
@@ -82,38 +81,25 @@ exports.handler = async function(event) {
       req.end();
     });
 
-    // Parse streaming SSE response and extract full text
-    var fullText = '';
-    var lines = result.body.split('\n');
-    lines.forEach(function(line) {
-      if (line.startsWith('data: ')) {
-        var data = line.slice(6).trim();
-        if (data === '[DONE]') return;
-        try {
-          var evt = JSON.parse(data);
-          if (evt.type === 'content_block_delta' && evt.delta && evt.delta.text) {
-            fullText += evt.delta.text;
-          }
-        } catch(e) {}
+    // Clean markdown fences from response
+    var responseBody = result.body;
+    try {
+      var apiResp = JSON.parse(responseBody);
+      if (apiResp.content && apiResp.content[0] && apiResp.content[0].text) {
+        var text = apiResp.content[0].text.trim()
+          .replace(/^```json\s*/im, '').replace(/^```\s*/im, '').replace(/```\s*$/m, '').trim();
+        var start = text.indexOf('{');
+        var end = text.lastIndexOf('}');
+        if (start >= 0 && end > start) text = text.substring(start, end + 1);
+        apiResp.content[0].text = text;
+        responseBody = JSON.stringify(apiResp);
       }
-    });
-
-    // Clean markdown fences
-    fullText = fullText.trim()
-      .replace(/^```json\s*/im, '').replace(/^```\s*/im, '').replace(/```\s*$/m, '').trim();
-    var start = fullText.indexOf('{');
-    var end = fullText.lastIndexOf('}');
-    if (start >= 0 && end > start) fullText = fullText.substring(start, end + 1);
-
-    // Return in same format as non-streaming response
-    var responseObj = {
-      content: [{ type: 'text', text: fullText }]
-    };
+    } catch(e) {}
 
     return {
-      statusCode: 200,
+      statusCode: result.status,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify(responseObj)
+      body: responseBody
     };
 
   } catch(err) {
