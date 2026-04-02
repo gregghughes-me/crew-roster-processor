@@ -51,7 +51,7 @@ exports.handler = async function(event) {
 
     // Use claude-haiku for speed - much faster than sonnet for structured JSON output
     parsed.model = 'claude-haiku-4-5-20251001';
-    parsed.max_tokens = 16000;
+    parsed.max_tokens = 8000;
 
     const postData = Buffer.from(JSON.stringify(parsed), 'utf8');
 
