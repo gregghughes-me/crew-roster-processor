@@ -1,6 +1,5 @@
 const https = require('https');
 
-// Regular synchronous handler - but we'll optimize the Anthropic call
 exports.handler = async function(event) {
 
   if (event.httpMethod === 'OPTIONS') {
@@ -49,9 +48,10 @@ exports.handler = async function(event) {
       };
     }
 
-    // Use claude-haiku for speed - much faster than sonnet for structured JSON output
     parsed.model = 'claude-haiku-4-5-20251001';
     parsed.max_tokens = 8000;
+    // Use streaming to prevent inactivity timeout
+    parsed.stream = true;
 
     const postData = Buffer.from(JSON.stringify(parsed), 'utf8');
 
@@ -77,41 +77,43 @@ exports.handler = async function(event) {
         });
       });
 
-      req.on('error', function(e) {
-        reject(new Error('HTTPS error: ' + e.message));
-      });
-
-      
-
+      req.on('error', function(e) { reject(new Error('HTTPS error: ' + e.message)); });
       req.write(postData);
       req.end();
     });
 
-    // Clean the response body - strip markdown fences if present
-    var responseBody = result.body;
-    try {
-      var apiResp = JSON.parse(responseBody);
-      // Already valid JSON from Anthropic wrapper - extract text content
-      if (apiResp.content && apiResp.content[0] && apiResp.content[0].text) {
-        var text = apiResp.content[0].text.trim();
-        // Strip markdown fences from the text
-        text = text.replace(/^```json\s*/im, '').replace(/^```\s*/im, '').replace(/```\s*$/m, '').trim();
-        // Find the JSON object
-        var start = text.indexOf('{');
-        var end = text.lastIndexOf('}');
-        if (start >= 0 && end > start) {
-          text = text.substring(start, end + 1);
-        }
-        // Rebuild the response with cleaned text
-        apiResp.content[0].text = text;
-        responseBody = JSON.stringify(apiResp);
+    // Parse streaming SSE response and extract full text
+    var fullText = '';
+    var lines = result.body.split('\n');
+    lines.forEach(function(line) {
+      if (line.startsWith('data: ')) {
+        var data = line.slice(6).trim();
+        if (data === '[DONE]') return;
+        try {
+          var evt = JSON.parse(data);
+          if (evt.type === 'content_block_delta' && evt.delta && evt.delta.text) {
+            fullText += evt.delta.text;
+          }
+        } catch(e) {}
       }
-    } catch(e) { /* leave responseBody as-is */ }
+    });
+
+    // Clean markdown fences
+    fullText = fullText.trim()
+      .replace(/^```json\s*/im, '').replace(/^```\s*/im, '').replace(/```\s*$/m, '').trim();
+    var start = fullText.indexOf('{');
+    var end = fullText.lastIndexOf('}');
+    if (start >= 0 && end > start) fullText = fullText.substring(start, end + 1);
+
+    // Return in same format as non-streaming response
+    var responseObj = {
+      content: [{ type: 'text', text: fullText }]
+    };
 
     return {
-      statusCode: result.status,
+      statusCode: 200,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: responseBody
+      body: JSON.stringify(responseObj)
     };
 
   } catch(err) {
