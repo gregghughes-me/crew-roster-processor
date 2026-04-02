@@ -1,7 +1,8 @@
 const https = require('https');
- 
+
+// Regular synchronous handler - but we'll optimize the Anthropic call
 exports.handler = async function(event) {
- 
+
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
@@ -13,7 +14,7 @@ exports.handler = async function(event) {
       body: ''
     };
   }
- 
+
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
@@ -21,7 +22,7 @@ exports.handler = async function(event) {
       body: JSON.stringify({ error: { message: 'Method not allowed' } })
     };
   }
- 
+
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return {
@@ -30,14 +31,30 @@ exports.handler = async function(event) {
       body: JSON.stringify({ error: { message: 'API key not configured' } })
     };
   }
- 
+
   try {
-    const body = event.isBase64Encoded
-      ? Buffer.from(event.body, 'base64').toString('utf8')
-      : event.body;
- 
-    const postData = Buffer.from(body, 'utf8');
- 
+    let body = event.body || '';
+    if (event.isBase64Encoded) {
+      body = Buffer.from(body, 'base64').toString('utf8');
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(body);
+    } catch(e) {
+      return {
+        statusCode: 400,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({ error: { message: 'Invalid JSON: ' + e.message } })
+      };
+    }
+
+    // Use claude-haiku for speed - much faster than sonnet for structured JSON output
+    parsed.model = 'claude-haiku-4-5-20251001';
+    parsed.max_tokens = 8000;
+
+    const postData = Buffer.from(JSON.stringify(parsed), 'utf8');
+
     const result = await new Promise(function(resolve, reject) {
       const options = {
         hostname: 'api.anthropic.com',
@@ -51,7 +68,7 @@ exports.handler = async function(event) {
           'anthropic-version': '2023-06-01'
         }
       };
- 
+
       var chunks = [];
       var req = https.request(options, function(res) {
         res.on('data', function(chunk) { chunks.push(chunk); });
@@ -59,26 +76,26 @@ exports.handler = async function(event) {
           resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') });
         });
       });
- 
+
       req.on('error', function(e) {
-        reject(new Error('HTTPS request failed: ' + e.message));
+        reject(new Error('HTTPS error: ' + e.message));
       });
- 
-      req.setTimeout(90000, function() {
-        req.abort();
-        reject(new Error('Request timed out after 90s'));
+
+      req.setTimeout(25000, function() {
+        req.destroy();
+        reject(new Error('Request timed out after 25s'));
       });
- 
+
       req.write(postData);
       req.end();
     });
- 
+
     return {
       statusCode: result.status,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
       body: result.body
     };
- 
+
   } catch(err) {
     return {
       statusCode: 500,
