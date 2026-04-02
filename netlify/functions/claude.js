@@ -81,7 +81,7 @@ exports.handler = async function(event) {
         reject(new Error('HTTPS error: ' + e.message));
       });
 
-      req.setTimeout(25000, function() {
+      req.setTimeout(24000, function() {
         req.destroy();
         reject(new Error('Request timed out after 25s'));
       });
