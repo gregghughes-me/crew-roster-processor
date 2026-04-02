@@ -87,10 +87,31 @@ exports.handler = async function(event) {
       req.end();
     });
 
+    // Clean the response body - strip markdown fences if present
+    var responseBody = result.body;
+    try {
+      var parsed = JSON.parse(responseBody);
+      // Already valid JSON from Anthropic wrapper - extract text content
+      if (parsed.content && parsed.content[0] && parsed.content[0].text) {
+        var text = parsed.content[0].text.trim();
+        // Strip markdown fences from the text
+        text = text.replace(/^```json\s*/im, '').replace(/^```\s*/im, '').replace(/```\s*$/m, '').trim();
+        // Find the JSON object
+        var start = text.indexOf('{');
+        var end = text.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+          text = text.substring(start, end + 1);
+        }
+        // Rebuild the response with cleaned text
+        parsed.content[0].text = text;
+        responseBody = JSON.stringify(parsed);
+      }
+    } catch(e) { /* leave responseBody as-is */ }
+
     return {
       statusCode: result.status,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: result.body
+      body: responseBody
     };
 
   } catch(err) {
