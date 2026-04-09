@@ -1175,7 +1175,14 @@ function finalize(data, op) {
 
 // ── API CALL ──
 function callAPI(msgs) {
-  return fetch('https://crew-roster-proxy.gregg-8ac.workers.dev', {
+  // Race the fetch against a 90-second timeout
+  var timeoutPromise = new Promise(function(_, reject) {
+    setTimeout(function() {
+      reject(new Error('API call timed out after 90s. The server may be busy — please try again.'));
+    }, 90000);
+  });
+
+  var fetchPromise = fetch('https://crew-roster-proxy.gregg-8ac.workers.dev', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
@@ -1197,6 +1204,8 @@ function callAPI(msgs) {
     if (!d.content||!d.content[0]||!d.content[0].text) throw new Error('Empty API response');
     return d.content[0].text;
   });
+
+  return Promise.race([fetchPromise, timeoutPromise]);
 }
 
 // ── FOLLOW-UP ──
