@@ -1,0 +1,2502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crew Roster Processor v2.4</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&family=Source+Sans+3:wght@300;400;600&display=swap');
+:root{
+  --bg:#0a0c10;--bg2:#0f1318;--bg3:#141920;--bg4:#1a2030;
+  --bdr:#1e2d42;--bdr2:#243447;
+  --ac:#1e90ff;--ac2:#0f6fd4;--acd:rgba(30,144,255,0.12);
+  --gld:#f0a500;--gldd:rgba(240,165,0,0.12);
+  --grn:#00c97a;--grnd:rgba(0,201,122,0.12);
+  --red:#ff4757;--redd:rgba(255,71,87,0.12);
+  --tx:#c8d6e8;--tx2:#7a90a8;--tx3:#3d5068;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--tx);font-family:'Source Sans 3',sans-serif;font-size:14px;min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(30,144,255,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(30,144,255,0.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
+.wrap{position:relative;z-index:1;max-width:1140px;margin:0 auto;padding:20px}
+/* HEADER */
+.hdr{display:flex;align-items:center;gap:14px;padding-bottom:20px;border-bottom:1px solid var(--bdr);margin-bottom:20px}
+.hdr-ico{width:42px;height:42px;background:var(--acd);border:1px solid var(--ac);border-radius:6px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.hdr-t{font-family:'Rajdhani',sans-serif;font-size:21px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#fff;line-height:1}
+.hdr-s{font-size:11px;color:var(--tx2);letter-spacing:1px;margin-top:3px;text-transform:uppercase;font-family:'Share Tech Mono',monospace}
+.hdr-b{margin-left:auto;background:var(--acd);border:1px solid var(--bdr2);border-radius:4px;padding:5px 11px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--tx2);text-align:right;line-height:1.6}
+.hdr-b span{color:var(--ac)}
+/* PROGRESS */
+.prog{display:flex;gap:3px;margin-bottom:16px}
+.ps{flex:1;height:3px;background:var(--bdr);transition:background .4s;border-radius:2px}
+.ps.act{background:var(--ac)}.ps.done{background:var(--grn)}
+/* GRID */
+.grid{display:grid;grid-template-columns:340px 1fr;gap:18px;align-items:start}
+@media(max-width:780px){.grid{grid-template-columns:1fr}}
+/* PANEL */
+.panel{background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:16px}
+.ph{padding:11px 15px;background:var(--bg3);border-bottom:1px solid var(--bdr);display:flex;align-items:center;gap:8px}
+.ph h2{font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:var(--tx)}
+.sn{width:20px;height:20px;border-radius:3px;background:var(--ac);color:#fff;font-family:'Share Tech Mono',monospace;font-size:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-weight:700}
+.sn.done{background:var(--grn)}.sn.pend{background:var(--tx3)}
+.pb{padding:15px}
+/* DROP ZONES */
+.dz{border:2px dashed var(--bdr2);border-radius:6px;padding:16px 14px;text-align:center;cursor:pointer;transition:all .2s;position:relative;margin-bottom:10px}
+.dz:hover,.dz.over{border-color:var(--ac);background:var(--acd)}
+.dz input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+.dz-ico{font-size:20px;margin-bottom:5px;display:block}
+.dz-lbl{font-size:12px;color:var(--tx2)}
+.dz-sub{font-size:11px;color:var(--tx3);margin-top:3px;font-family:'Share Tech Mono',monospace}
+.dz.ok{border-color:var(--grn);background:var(--grnd)}.dz.ok .dz-lbl{color:var(--grn)}
+.fi{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--grn);margin-top:5px;display:none;align-items:center;gap:5px}
+.fi.show{display:flex}.fi::before{content:'✓ '}
+/* FORM */
+.qform{display:flex;flex-direction:column;gap:10px}
+.ql{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--tx2);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:4px}
+.qi{background:var(--bg3);border:1px solid var(--bdr2);border-radius:5px;padding:7px 10px;color:var(--tx);font-size:13px;outline:none;transition:border-color .2s;width:100%}
+.qi:focus{border-color:var(--ac)}.qi::placeholder{color:var(--tx3)}
+.qs{background:var(--bg3);border:1px solid var(--bdr2);border-radius:5px;padding:7px 28px 7px 10px;color:var(--tx);font-size:13px;outline:none;width:100%;cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='7' viewBox='0 0 11 7'%3E%3Cpath d='M1 1l4.5 4.5L10 1' stroke='%237a90a8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 9px center;transition:border-color .2s}
+.qs:focus{border-color:var(--ac)}.qs option{background:var(--bg3)}
+/* PREFIX ROW */
+.prefix-row{display:flex;gap:8px;align-items:center}
+.prefix-row .qi{flex:1}
+.prefix-preview{font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--ac);margin-top:5px;min-height:16px}
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:9px 16px;border-radius:5px;border:none;cursor:pointer;font-family:'Rajdhani',sans-serif;font-size:14px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;transition:all .2s;white-space:nowrap}
+.btn-p{background:var(--ac);color:#fff}.btn-p:hover{background:var(--ac2)}.btn-p:disabled{background:var(--tx3);cursor:not-allowed}
+.btn-s{background:var(--grn);color:#000}.btn-s:hover{filter:brightness(1.1)}
+.btn-g{background:transparent;color:var(--tx2);border:1px solid var(--bdr2)}.btn-g:hover{border-color:var(--ac);color:var(--ac)}
+.btn-w{width:100%}
+/* CONVERSATION */
+.conv{background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;display:flex;flex-direction:column;height:580px}
+.convh{padding:11px 15px;background:var(--bg3);border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.convh h2{font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:var(--tx);display:flex;align-items:center;gap:8px}
+.sdot{width:8px;height:8px;border-radius:50%;background:var(--tx3)}
+.sdot.act{background:var(--grn);box-shadow:0 0 0 3px var(--grnd);animation:pulse 2s infinite}
+.sdot.think{background:var(--gld);box-shadow:0 0 0 3px var(--gldd);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.convmsgs{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:12px;scrollbar-width:thin;scrollbar-color:var(--bdr2) transparent}
+.convmsgs::-webkit-scrollbar{width:4px}.convmsgs::-webkit-scrollbar-thumb{background:var(--bdr2);border-radius:2px}
+.msg{display:flex;gap:9px;animation:fsi .25s ease}
+@keyframes fsi{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.mav{width:27px;height:27px;border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-family:'Share Tech Mono',monospace;font-size:10px;font-weight:700;margin-top:2px}
+.msg.assistant .mav{background:var(--acd);border:1px solid var(--ac);color:var(--ac)}
+.msg.user .mav{background:var(--gldd);border:1px solid var(--gld);color:var(--gld)}
+.msg.system .mav{background:var(--grnd);border:1px solid var(--grn);color:var(--grn)}
+.msg.err .mav{background:var(--redd);border:1px solid var(--red);color:var(--red)}
+.mc{flex:1;min-width:0}
+.mmeta{font-family:'Share Tech Mono',monospace;font-size:10px;color:var(--tx3);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px}
+.mb{background:var(--bg3);border:1px solid var(--bdr);border-radius:5px;padding:9px 13px;font-size:13px;line-height:1.6;color:var(--tx);white-space:pre-wrap;word-break:break-word}
+.msg.user .mb{background:var(--bg4);border-color:var(--bdr2)}
+.msg.system .mb{background:var(--grnd);border-color:var(--grn);color:var(--grn);font-family:'Share Tech Mono',monospace;font-size:12px}
+.msg.err .mb{background:var(--redd);border-color:var(--red);color:var(--red);font-family:'Share Tech Mono',monospace;font-size:12px}
+.mb.thinking{background:var(--gldd);border-color:var(--gld);color:var(--gld);font-family:'Share Tech Mono',monospace;font-size:12px}
+.convin{padding:11px 14px;border-top:1px solid var(--bdr);flex-shrink:0}
+.inrow{display:flex;gap:7px}
+.cta{flex:1;background:var(--bg3);border:1px solid var(--bdr2);border-radius:5px;padding:8px 11px;color:var(--tx);font-size:13px;outline:none;resize:none;line-height:1.5;transition:border-color .2s;min-height:36px;max-height:110px}
+.cta:focus{border-color:var(--ac)}.cta::placeholder{color:var(--tx3)}
+.sbtn{background:var(--ac);border:none;border-radius:5px;width:36px;height:36px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background .2s;align-self:flex-end}
+.sbtn:hover{background:var(--ac2)}.sbtn:disabled{background:var(--tx3);cursor:not-allowed}
+.sbar{background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;padding:7px 13px;margin-top:10px;display:flex;align-items:center;gap:9px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--tx2)}
+.dlbox{background:var(--grnd);border:1px solid var(--grn);border-radius:8px;padding:18px;text-align:center;margin-top:14px;display:none}
+.dlbox.show{display:block}
+.dlbox h3{font-family:'Rajdhani',sans-serif;font-size:15px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--grn);margin-bottom:6px}
+.dlbox p{font-size:12px;color:var(--tx2);margin-bottom:14px;font-family:'Share Tech Mono',monospace}
+.chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:11px;justify-content:center}
+.chip{background:var(--bg4);border:1px solid var(--bdr2);border-radius:4px;padding:3px 9px;font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--tx2)}
+.chip.a{border-color:var(--ac);color:var(--ac);background:var(--acd)}.chip.d{border-color:var(--grn);color:var(--grn);background:var(--grnd)}
+.note{background:var(--gldd);border:1px solid rgba(240,165,0,.3);border-radius:4px;padding:7px 11px;font-size:12px;color:var(--gld);font-family:'Share Tech Mono',monospace;margin-top:9px;line-height:1.5;display:none}
+.note.show{display:block}
+.lbl-sm{font-size:11px;color:var(--tx2);margin-bottom:4px;font-family:'Share Tech Mono',monospace;text-transform:uppercase;letter-spacing:1px}
+.output-note{font-size:11px;color:var(--tx3);font-family:'Share Tech Mono',monospace;margin-top:4px;font-style:italic}
+.spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;display:inline-block}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div class="hdr">
+  <div class="hdr-ico">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e90ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+  </div>
+  <div>
+    <div class="hdr-t">Crew Roster Processor</div>
+    <div class="hdr-s">Utility Storm Response &middot; Workforce Deployment</div>
+  </div>
+  <div class="hdr-b">
+    <div>Model <span>claude-sonnet-4-20250514</span></div>
+    <div>Engine <span>Anthropic API</span></div>
+  </div>
+</div>
+
+<div class="prog">
+  <div class="ps act" id="p1"></div><div class="ps" id="p2"></div>
+  <div class="ps" id="p3"></div><div class="ps" id="p4"></div><div class="ps" id="p5"></div>
+</div>
+
+<div class="grid">
+  <div>
+    <!-- UPLOAD -->
+    <div class="panel">
+      <div class="ph"><div class="sn" id="sn1">1</div><h2>Upload Files</h2></div>
+      <div class="pb">
+        <div class="lbl-sm">Client workbook (.xlsx)</div>
+        <div class="dz" id="dz1" style="margin-top:6px">
+          <input type="file" id="f1" accept=".xlsx,.xls">
+          <span class="dz-ico">&#128203;</span>
+          <div class="dz-lbl">Click or drop client workbook</div>
+          <div class="dz-sub">Must have ROSTER + CLASSIFICATIONS tabs</div>
+        </div>
+        <div class="fi" id="fi1">loading...</div>
+
+        <div class="lbl-sm" style="margin-top:13px">Contractor roster file(s) (.xlsx)</div>
+        <div class="dz" id="dz2" style="margin-top:6px">
+          <input type="file" id="f2" accept=".xlsx,.xls" multiple>
+          <span class="dz-ico">&#128119;</span>
+          <div class="dz-lbl">Click or drop contractor file(s)</div>
+          <div class="dz-sub">Multiple files accepted &mdash; any format</div>
+        </div>
+        <div class="fi" id="fi2">loading...</div>
+
+        <div class="lbl-sm" style="margin-top:13px">Master Classifications</div>
+        <button id="btnMasterEditor" onclick="openMasterEditor()" style="margin-top:6px;width:100%;background:transparent;border:1px solid var(--gld);color:var(--gld);border-radius:6px;padding:8px;font-size:11px;font-family:'Rajdhani',sans-serif;font-weight:700;letter-spacing:1px;cursor:pointer;">⚙ EDIT MASTER CLASSIFICATIONS — <span id="masterCount">0</span> mappings loaded</button>
+      </div>
+    </div>
+
+    <!-- DEPLOYMENT DETAILS -->
+    <div class="panel">
+      <div class="ph"><div class="sn pend" id="sn2">2</div><h2>Deployment Details</h2></div>
+      <div class="pb">
+        <div class="qform">
+          <div>
+            <label class="ql">Client Company Name</label>
+            <input type="text" class="qi" id="qco" placeholder="e.g. FirstEnergy, Duke Energy">
+          </div>
+          <div>
+            <label class="ql">Contractor Company Name</label>
+            <input type="text" class="qi" id="qct" placeholder="e.g. Peaches Power, Blott USA">
+          </div>
+          <div>
+            <label class="ql">Storm Name / Job Number</label>
+            <input type="text" class="qi" id="qst" placeholder="Leave blank if not applicable">
+          </div>
+          <div>
+            <label class="ql">Union Status</label>
+            <select class="qs" id="qun">
+              <option value="">-- Select --</option>
+              <option value="UNION">UNION</option>
+              <option value="NON UNION">NON UNION</option>
+            </select>
+          </div>
+          <div>
+            <label class="ql">Crew Number Prefix</label>
+            <input type="text" class="qi" id="qpfx" placeholder="e.g. PEA-BAI" style="text-transform:uppercase">
+            <div class="prefix-preview" id="pfxPreview"></div>
+          </div>
+          <div>
+            <label class="ql">Output Tabs</label>
+            <select class="qs" id="qop">
+              <option value="">-- Select --</option>
+              <option value="arcos">ST ROSTER + ARCOS</option>
+              <option value="storm">ST ROSTER + STORM MANAGER</option>
+              <option value="neither">ST ROSTER ONLY</option>
+            </select>
+            <div class="output-note">ROSTER tab is always populated</div>
+          </div>
+          <div>
+            <label class="ql">Create Initial Timesheets?</label>
+            <select class="qs" id="qts">
+              <option value="">-- Select --</option>
+              <option value="yes">YES</option>
+              <option value="no">NO</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="margin-top:13px">
+          <button class="btn btn-p btn-w" id="btnProc" disabled>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            Process Roster
+          </button>
+        </div>
+        <div class="note" id="procNote">Sending files to Claude API&hellip; 30&ndash;90 seconds depending on roster size.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div>
+    <div class="conv">
+      <div class="convh">
+        <h2><div class="sdot" id="sdot"></div>Processing Log</h2>
+        <div style="display:flex;gap:7px;align-items:center">
+          <span style="font-family:'Share Tech Mono',monospace;font-size:11px;color:var(--tx3)" id="msgct">0 msgs</span>
+          <button class="btn btn-g" style="padding:3px 9px;font-size:11px" onclick="clearConv()">Clear</button>
+        </div>
+      </div>
+      <div class="convmsgs" id="msgs">
+        <div class="msg system">
+          <div class="mav">SYS</div>
+          <div class="mc"><div class="mmeta">Ready</div>
+          <div class="mb">Upload your client workbook and contractor file(s), fill in the deployment details, then click Process Roster. ROSTER tab is always built — select additional tabs as needed.</div></div>
+        </div>
+      </div>
+      <div class="convin">
+        <div class="inrow">
+          <textarea class="cta" id="cinput" placeholder="Send a correction or follow-up..." rows="1" disabled></textarea>
+          <button class="sbtn" id="sbtn" disabled onclick="sendFollowUp()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="sbar" id="sbar">
+      <span id="sico">&#128164;</span>&nbsp;
+      <span id="stxt">Waiting for files and deployment details...</span>
+    </div>
+
+    <div class="dlbox" id="dlbox">
+      <h3>Processing Complete</h3>
+      <p id="dlname">Ready to download</p>
+      <button class="btn btn-s btn-w" id="btnDl" onclick="doDownload()">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        Download Processed Workbook
+      </button>
+      <div class="chips" id="chips"></div>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+var API_KEY = 'managed-by-proxy';
+var clientBuf=null, clientName='', contractorFiles=[], convHistory=[], outBytes=null, busy=false;
+var clarificationMemory = {}; // persists classification answers across crews within a run
+// masterClassifications: keyed by lowercase variation → { standard, display }
+var masterClassifications = (function() {
+  var defaults = [
+    ['GF','General Foreman'],
+    ['General Foreman','General Foreman'],
+    ['Gen Foreman','General Foreman'],
+    ['General Fmn','General Foreman'],
+    ['Superintendent','Superintendent'],
+    ['Supt','Superintendent'],
+    ['Supt.','Superintendent'],
+    ['Super','Superintendent'],
+    ['JL','Journeyman Lineman'],
+    ['J-Man','Journeyman Lineman'],
+    ['Journeyman','Journeyman Lineman'],
+    ['Journeyman Lineman','Journeyman Lineman'],
+    ['Journeyman Linemen','Journeyman Lineman'],
+    ['Journey Lineman','Journeyman Lineman'],
+    ['Line Tech','Journeyman Lineman'],
+    ['Lineman','Journeyman Lineman'],
+    ['JL-A','Journeyman Lineman'],
+    ['Journeyman Lineman (A)','Journeyman Lineman'],
+    ['Foreman','Foreman'],
+    ['Crew Foreman','Foreman'],
+    ['Line Foreman','Foreman'],
+    ['FN','Foreman'],
+    ['Fn','Foreman'],
+    ['Fmn','Foreman'],
+    ['Apprentice','Apprentice'],
+    ['Apprentice C','Apprentice'],
+    ['App C','Apprentice'],
+    ['Apprentice Lineman','Apprentice'],
+    ['App','Apprentice'],
+    ['OP','Operator'],
+    ['Operator','Operator'],
+    ['Equipment Operator','Operator'],
+    ['Equipment Operator A','Operator'],
+    ['Equip Op','Operator'],
+    ['Safety','Safety Coordinator'],
+    ['Safety Coordinator','Safety Coordinator'],
+    ['Safety Professional','Safety Coordinator'],
+    ['Safety Rep','Safety Coordinator'],
+    ['Safety Officer','Safety Coordinator'],
+    ['Mechanic','Fleet Mechanic'],
+    ['Fleet Mechanic','Fleet Mechanic'],
+    ['Mech','Fleet Mechanic'],
+    ['Groundman','Groundman'],
+    ['Groundman w/ CDL-B','Groundman'],
+    ['Groundman w/ CDL-A','Groundman'],
+    ['Groundman CDL','Groundman'],
+    ['Groundman w/CDL','Groundman'],
+    ['Gndmn','Groundman'],
+    ['Groundman NCCO','Groundman'],
+    ['Storm Coordinator','Storm Coordinator'],
+    ['Storm Coord','Storm Coordinator'],
+    ['PDA Rep','Storm Coordinator'],
+    ['Pickup 4X4','Pickup'],
+    ['Pickup','Pickup'],
+    ['Pick-up','Pickup'],
+    ['P/U','Pickup'],
+    ['PU','Pickup'],
+    ['Truck','Pickup'],
+    ["Bucket 52' - 60'",'Bucket Truck'],
+    ["Bucket 80'",'Bucket Truck'],
+    ['Bucket Truck','Bucket Truck'],
+    ['Rear Lot Cart Bucket','Single Bucket'],
+    ['Single Bucket','Single Bucket'],
+    ['Digger','Digger Derrick'],
+    ['Digger Derrick','Digger Derrick'],
+    ['Rear lot cart Digger','Back Yard Machine'],
+    ['Line Truck','Digger Derrick'],
+    ['Mechanic Truck 4X4','Fleet Mechanic Truck'],
+    ['Mechanic Truck','Fleet Mechanic Truck'],
+    ['Mech Truck','Fleet Mechanic Truck'],
+    ['Service Truck','Service Truck'],
+    ['Office Trailer','Trailer'],
+    ['Supply Trailer','Trailer'],
+    ['Pole trailer','Trailer'],
+    ['Trailer','Trailer'],
+    ['Dump Truck 4X4','Dump Truck'],
+    ['Dump Truck','Dump Truck']
+  ];
+  var mc = {};
+  defaults.forEach(function(pair) {
+    mc[pair[0].toLowerCase()] = { standard: pair[1], display: pair[0] };
+  });
+  return mc;
+})();
+var processingLog = { errors:[], warnings:[], duplicates:[], steps:[], info:[] };
+
+// Update master count badge after DOM loads
+document.addEventListener('DOMContentLoaded', function() {
+  var countEl = document.getElementById('masterCount');
+  if (countEl) countEl.textContent = Object.keys(masterClassifications).length;
+});
+
+// ── PREFIX PREVIEW ──
+document.getElementById('qpfx').addEventListener('input', function(){
+  this.value = this.value.toUpperCase();
+  var pfx = this.value.trim();
+  var prev = document.getElementById('pfxPreview');
+  if (pfx) {
+    prev.textContent = pfx+'-001, '+pfx+'-002, ... '+pfx+'-SUPPORT';
+  } else {
+    prev.textContent = '';
+  }
+  checkReady();
+});
+
+// ── FILE ZONES ──
+function setupZone(dzId, inputId, fiId, multi) {
+  var dz=document.getElementById(dzId), inp=document.getElementById(inputId), fi=document.getElementById(fiId);
+  dz.addEventListener('dragover', function(e){ e.preventDefault(); dz.classList.add('over'); });
+  dz.addEventListener('dragleave', function(){ dz.classList.remove('over'); });
+  dz.addEventListener('drop', function(e){
+    e.preventDefault(); dz.classList.remove('over');
+    var files = Array.from(e.dataTransfer.files).filter(function(f){ return /\.xlsx?$/i.test(f.name); });
+    if (files.length) loadFiles(files, dzId, fiId, multi);
+  });
+  inp.addEventListener('change', function(){
+    if (this.files.length) loadFiles(Array.from(this.files), dzId, fiId, multi);
+    this.value = '';
+  });
+}
+
+function loadFiles(files, dzId, fiId, multi) {
+  var dz=document.getElementById(dzId), fi=document.getElementById(fiId);
+  if (!multi) {
+    var f=files[0], r=new FileReader();
+    r.onload = function(ev){
+      clientBuf=ev.target.result; clientName=f.name;
+      dz.classList.add('ok');
+      dz.querySelector('.dz-lbl').textContent = f.name;
+      fi.textContent = f.name+' ('+(f.size/1024).toFixed(1)+' KB)';
+      fi.classList.add('show');
+      var qco = document.getElementById('qco');
+      if (!qco.value) {
+        var c = f.name.replace(/\.xlsx?$/i,'').replace(/\b(crew|roster|upload|workbook|template)\b/gi,'').replace(/v\d+(\.\d+)?/gi,'').replace(/[-_]+/g,' ').trim();
+        if (c) qco.value = c.replace(/\b\w/g, function(x){ return x.toUpperCase(); });
+      }
+      updateProg(1); checkReady();
+    };
+    r.readAsArrayBuffer(f);
+  } else {
+    contractorFiles = [];
+    var done=0, names=[];
+    files.forEach(function(f){
+      var r=new FileReader();
+      r.onload = function(ev){
+        contractorFiles.push({name:f.name, buf:ev.target.result});
+        names.push(f.name); done++;
+        if (done===files.length){
+          dz.classList.add('ok');
+          dz.querySelector('.dz-lbl').textContent = files.length===1 ? files[0].name : files.length+' files loaded';
+          fi.textContent = names.join(', '); fi.classList.add('show');
+          checkReady();
+        }
+      };
+      r.readAsArrayBuffer(f);
+    });
+  }
+}
+
+setupZone('dz1','f1','fi1',false);
+setupZone('dz2','f2','fi2',true);
+
+// ── MASTER CLASSIFICATIONS EDITOR ──
+function openMasterEditor() {
+  var existing = document.getElementById('masterEditorModal');
+  if (existing) { existing.style.display = 'flex'; renderMasterTable(); return; }
+
+  var modal = document.createElement('div');
+  modal.id = 'masterEditorModal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
+
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#0f1318;border:1px solid var(--gld);border-radius:10px;padding:20px;width:700px;max-width:95vw;max-height:85vh;display:flex;flex-direction:column;gap:12px;';
+
+  var hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
+  hdr.innerHTML = '<span style="color:var(--gld);font-family:Rajdhani,sans-serif;font-weight:700;font-size:15px;letter-spacing:2px;">⚙ MASTER CLASSIFICATIONS EDITOR</span>';
+  var closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  closeBtn.style.cssText = 'background:transparent;border:none;color:#a0b4c8;font-size:16px;cursor:pointer;';
+  closeBtn.onclick = function(){ modal.style.display = 'none'; };
+  hdr.appendChild(closeBtn);
+  box.appendChild(hdr);
+
+  var desc = document.createElement('div');
+  desc.style.cssText = 'color:#7a9ab8;font-size:11px;font-family:"Share Tech Mono",monospace;';
+  desc.textContent = 'Add all known variations of each classification. When processing, any source variation is automatically mapped to its Standard Category, then matched to the client\'s Classifications tab.';
+  box.appendChild(desc);
+
+  // Add row input
+  var addRow = document.createElement('div');
+  addRow.style.cssText = 'display:flex;gap:8px;';
+  var inpVar = document.createElement('input');
+  inpVar.placeholder = 'Source variation (e.g. JL, J-Man, Journeyman Lineman)';
+  inpVar.style.cssText = 'flex:1;background:#0a0c10;color:#e8f0f8;border:1px solid #243447;border-radius:4px;padding:7px 10px;font-size:12px;';
+  var inpStd = document.createElement('input');
+  inpStd.placeholder = 'Standard category (e.g. Journeyman Lineman)';
+  inpStd.style.cssText = 'flex:1;background:#0a0c10;color:#e8f0f8;border:1px solid #243447;border-radius:4px;padding:7px 10px;font-size:12px;';
+  var addBtn = document.createElement('button');
+  addBtn.textContent = '+ Add';
+  addBtn.style.cssText = 'background:var(--gld);color:#000;border:none;border-radius:4px;padding:7px 14px;font-family:Rajdhani,sans-serif;font-weight:700;font-size:12px;cursor:pointer;white-space:nowrap;';
+  addBtn.onclick = function() {
+    var v = inpVar.value.trim(), s = inpStd.value.trim();
+    if (!v || !s) return;
+    masterClassifications[v.toLowerCase()] = { standard: s, display: v };
+    inpVar.value = ''; inpStd.value = '';
+    renderMasterTable();
+  };
+  inpVar.addEventListener('keydown', function(e){ if(e.key==='Enter') addBtn.click(); });
+  inpStd.addEventListener('keydown', function(e){ if(e.key==='Enter') addBtn.click(); });
+  addRow.appendChild(inpVar);
+  addRow.appendChild(inpStd);
+  addRow.appendChild(addBtn);
+  box.appendChild(addRow);
+
+  // Table container
+  var tableWrap = document.createElement('div');
+  tableWrap.id = 'masterTableWrap';
+  tableWrap.style.cssText = 'overflow-y:auto;flex:1;border:1px solid #1e2d42;border-radius:4px;';
+  box.appendChild(tableWrap);
+
+  // Footer buttons
+  var footer = document.createElement('div');
+  footer.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
+
+  var exportBtn = document.createElement('button');
+  exportBtn.textContent = '⬇ Export as CSV';
+  exportBtn.style.cssText = 'background:transparent;border:1px solid #243447;color:#a0b4c8;border-radius:4px;padding:7px 14px;font-size:11px;font-family:Rajdhani,sans-serif;font-weight:700;cursor:pointer;';
+  exportBtn.onclick = exportMasterCSV;
+
+  var clearBtn = document.createElement('button');
+  clearBtn.textContent = 'Clear All';
+  clearBtn.style.cssText = 'background:transparent;border:1px solid #c0392b;color:#e74c3c;border-radius:4px;padding:7px 14px;font-size:11px;font-family:Rajdhani,sans-serif;font-weight:700;cursor:pointer;';
+  clearBtn.onclick = function(){ if(confirm('Clear all master classifications?')){ masterClassifications={}; renderMasterTable(); }};
+
+  var doneBtn = document.createElement('button');
+  doneBtn.textContent = 'Done';
+  doneBtn.style.cssText = 'background:var(--gld);color:#000;border:none;border-radius:4px;padding:7px 20px;font-family:Rajdhani,sans-serif;font-weight:700;font-size:12px;cursor:pointer;';
+  doneBtn.onclick = function(){ modal.style.display='none'; };
+
+  footer.appendChild(exportBtn);
+  footer.appendChild(clearBtn);
+  footer.appendChild(doneBtn);
+  box.appendChild(footer);
+  modal.appendChild(box);
+  document.body.appendChild(modal);
+  renderMasterTable();
+}
+
+function renderMasterTable() {
+  var wrap = document.getElementById('masterTableWrap');
+  // Update count badge
+  var countEl = document.getElementById('masterCount');
+  if (countEl) countEl.textContent = Object.keys(masterClassifications).length;
+  if (!wrap) return;
+  var keys = Object.keys(masterClassifications);
+
+  if (keys.length === 0) {
+    wrap.innerHTML = '<div style="color:#4a6070;font-size:12px;padding:20px;text-align:center;font-family:Share Tech Mono,monospace;">No mappings yet. Add rows above or upload a file.</div>';
+    return;
+  }
+
+  // Group by standard category
+  var groups = {};
+  keys.forEach(function(k) {
+    var std = masterClassifications[k].standard;
+    if (!groups[std]) groups[std] = [];
+    groups[std].push({ key: k, display: masterClassifications[k].display || k });
+  });
+
+  var html = '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+  html += '<tr style="background:#141920;position:sticky;top:0;"><th style="text-align:left;padding:8px 10px;color:#7a9ab8;font-family:Rajdhani,sans-serif;letter-spacing:1px;border-bottom:1px solid #1e2d42;">STANDARD CATEGORY</th><th style="text-align:left;padding:8px 10px;color:#7a9ab8;font-family:Rajdhani,sans-serif;letter-spacing:1px;border-bottom:1px solid #1e2d42;">SOURCE VARIATIONS</th><th style="width:40px;border-bottom:1px solid #1e2d42;"></th></tr>';
+
+  Object.keys(groups).sort().forEach(function(std) {
+    var variations = groups[std];
+    html += '<tr style="border-bottom:1px solid #1a2430;">';
+    html += '<td style="padding:8px 10px;color:var(--gld);font-family:Rajdhani,sans-serif;font-weight:600;vertical-align:top;">' + std + '</td>';
+    html += '<td style="padding:8px 10px;color:#e8f0f8;">';
+    variations.forEach(function(v) {
+      html += '<span style="display:inline-block;background:#1a2030;border:1px solid #243447;border-radius:3px;padding:2px 8px;margin:2px;font-family:Share Tech Mono,monospace;">' + v.display +
+        ' <button onclick="deleteMasterEntry(\'' + v.key.replace(/'/g,"\\'") + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:10px;padding:0 2px;">✕</button></span>';
+    });
+    html += '</td>';
+    html += '<td style="padding:8px;vertical-align:top;"></td>';
+    html += '</tr>';
+  });
+  html += '</table>';
+  wrap.innerHTML = html;
+}
+
+function deleteMasterEntry(key) {
+  delete masterClassifications[key];
+  renderMasterTable();
+}
+
+function exportMasterCSV() {
+  var lines = ['SOURCE VARIATION,STANDARD CATEGORY'];
+  Object.keys(masterClassifications).sort().forEach(function(k) {
+    var v = masterClassifications[k];
+    lines.push('"' + (v.display||k).replace(/"/g,'""') + '","' + v.standard.replace(/"/g,'""') + '"');
+  });
+  var blob = new Blob([lines.join('\n')], {type:'text/csv'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'master_classifications.csv';
+  a.click();
+}
+
+// Apply master classifications to a source value — returns standard category or null
+function applyMasterClass(sourceValue) {
+  if (!sourceValue) return null;
+  var key = sourceValue.toLowerCase().trim();
+  return masterClassifications[key] ? masterClassifications[key].standard : null;
+}
+function checkReady() {
+  var hasFiles = !!clientBuf && contractorFiles.length>0;
+  document.getElementById('btnProc').disabled = !hasFiles;
+  if (!clientBuf) setStatus('&#128164;','Upload your client workbook to begin');
+  else if (!contractorFiles.length) setStatus('&#128164;','Upload contractor roster file(s)');
+  else setStatus('&#9889;','Ready — fill in deployment details and click Process Roster');
+}
+
+['qco','qct','qun','qop','qst','qpfx','qts'].forEach(function(id){
+  var el = document.getElementById(id);
+  el.addEventListener('input', checkReady);
+  el.addEventListener('change', checkReady);
+});
+
+// ── XLSX TO TEXT ──
+function xlsxToText(buf, name) {
+  try {
+    var wb = XLSX.read(buf, {type:'array', cellFormula:false, cellNF:false, cellStyles:false});
+    var out = '=== FILE: ' + name + ' ===\n';
+    var isClientWB = wb.SheetNames.indexOf('CLASSIFICATIONS') >= 0;
+
+    var sheetsToProcess = [];
+    if (isClientWB) {
+      sheetsToProcess = ['CLASSIFICATIONS'];
+    } else {
+      var exactMatch = wb.SheetNames.filter(function(sn){ return sn.toLowerCase() === 'roster'; });
+      var partialMatch = wb.SheetNames.filter(function(sn){ return sn.toLowerCase().indexOf('roster') >= 0 && sn.toLowerCase() !== 'roster'; });
+      var skipSheets = ['dropdowns','dropdown','instructions','manual of operations','states','rev notes','notes','change log','cover','summary'];
+      var otherSheets = wb.SheetNames.filter(function(sn){
+        var snl = sn.toLowerCase();
+        return skipSheets.indexOf(snl) < 0 && snl.indexOf('roster') < 0;
+      });
+      if (exactMatch.length > 0) sheetsToProcess = [exactMatch[0]];
+      else if (partialMatch.length > 0) sheetsToProcess = [partialMatch[0]];
+      else if (otherSheets.length > 0) sheetsToProcess = [otherSheets[0]];
+    }
+
+    sheetsToProcess.forEach(function(sn) {
+      var ws = wb.Sheets[sn];
+      if (!ws || !ws['!ref']) return;
+      var range = XLSX.utils.decode_range(ws['!ref']);
+
+      // For CLASSIFICATIONS tab: find and extract both columns explicitly
+      if (sn === 'CLASSIFICATIONS') {
+        // Read header row to find column indices
+        var headers = [];
+        for (var c = range.s.c; c <= range.e.c; c++) {
+          var cell = ws[XLSX.utils.encode_cell({r: range.s.r, c: c})];
+          headers.push(cell && cell.v ? String(cell.v).trim() : '');
+        }
+        var classCol = -1, arcosCol = -1;
+        headers.forEach(function(h, i) {
+          var hl = h.toUpperCase();
+          if (hl === 'CLASSIFICATION' || hl === 'CLASSIFICATIONS') classCol = i;
+          if (hl.indexOf('ARCOS') >= 0) arcosCol = i;
+        });
+
+        out += '\n--- Sheet: CLASSIFICATIONS ---\n';
+        out += 'CLASSIFICATION\tARCOS RESOURCE TYPES\n';
+        for (var r = range.s.r + 1; r <= range.e.r; r++) {
+          var classVal = '', arcosVal = '';
+          if (classCol >= 0) {
+            var cc = ws[XLSX.utils.encode_cell({r:r, c:classCol})];
+            classVal = cc && cc.v ? String(cc.v).trim() : '';
+          }
+          if (arcosCol >= 0) {
+            var ac = ws[XLSX.utils.encode_cell({r:r, c:arcosCol})];
+            arcosVal = ac && ac.v ? String(ac.v).trim() : '';
+          }
+          if (classVal || arcosVal) out += classVal + '\t' + arcosVal + '\n';
+        }
+        return;
+      }
+
+      // For contractor sheets: process all columns
+      var rows = [];
+      for (var r = range.s.r; r <= range.e.r; r++) {
+        var row = [];
+        var hasData = false;
+        for (var c = range.s.c; c <= range.e.c; c++) {
+          var cell = ws[XLSX.utils.encode_cell({r:r, c:c})];
+          var val = '';
+          if (cell && cell.v !== undefined && cell.v !== null) {
+            var s = String(cell.v).trim();
+            if (!s.startsWith('=') && s.indexOf('MISSING') < 0 &&
+                s.indexOf('IF(AND') < 0 && s.length > 0) {
+              val = s; hasData = true;
+            }
+          }
+          row.push(val);
+        }
+        var realVals = row.filter(function(v){ return v !== ''; });
+        if (hasData && realVals.length >= 2) {
+          while (row.length > 0 && row[row.length-1] === '') row.pop();
+          rows.push(row.join('\t'));
+        }
+      }
+      if (rows.length > 0) {
+        out += '\n--- Sheet: ' + sn + ' ---\n';
+        out += rows.join('\n') + '\n';
+      }
+    });
+
+    if (out.length > 5000) out = out.substring(0, 5000) + '\n[truncated]';
+    return out;
+  } catch(e) { return '[Error: ' + e.message + ']'; }
+}
+
+// ── XLSX TO CREW CHUNKS ──
+// Returns [{label, text}] — one entry per detected crew group in contractor files.
+// Detection priority:
+//   (1) Crew-lead assignment column (col with "crew lead" + "first" or "last" or "name" in header)
+//   (2) Dedicated crew-number column (col containing "crew" in header, not the assignment col)
+//   (3) "Time Sheet N" header rows
+//   (4) Fixed-size block fallback
+function xlsxToCrewChunks(contractorFiles, clientTxt) {
+  var allChunks = [];
+
+  contractorFiles.forEach(function(f) {
+    try {
+      var wb = XLSX.read(f.buf, {type:'array', cellFormula:false, cellNF:false, cellStyles:false});
+      var skipSheets = ['dropdowns','dropdown','instructions','manual of operations','states','rev notes','notes','change log','cover','summary'];
+      var exactMatch = wb.SheetNames.filter(function(sn){ return sn.toLowerCase() === 'roster'; });
+      var partialMatch = wb.SheetNames.filter(function(sn){ return sn.toLowerCase().indexOf('roster') >= 0 && sn.toLowerCase() !== 'roster'; });
+      var otherSheets = wb.SheetNames.filter(function(sn){
+        var snl = sn.toLowerCase();
+        return skipSheets.indexOf(snl) < 0 && snl.indexOf('roster') < 0;
+      });
+      var sheetName = exactMatch[0] || partialMatch[0] || otherSheets[0];
+      if (!sheetName) return;
+
+      var ws = wb.Sheets[sheetName];
+      if (!ws || !ws['!ref']) return;
+      var range = XLSX.utils.decode_range(ws['!ref']);
+
+      // ── Read every raw row ──
+      var rawRows = [];
+      var headerRowIdx = -1;
+      var headerRow = [];
+
+      for (var r = range.s.r; r <= range.e.r; r++) {
+        var row = [];
+        for (var c = range.s.c; c <= range.e.c; c++) {
+          var cell = ws[XLSX.utils.encode_cell({r:r, c:c})];
+          var val = '';
+          if (cell && cell.v !== undefined && cell.v !== null) {
+            var s = String(cell.v).trim();
+            if (!s.startsWith('=') && s.indexOf('IF(AND') < 0 && s.length > 0) val = s;
+          }
+          row.push(val);
+        }
+        while (row.length > 0 && row[row.length-1] === '') row.pop();
+        var nonEmpty = row.filter(function(v){ return v !== ''; });
+
+        var isTimeSheet = false;
+        var tsLabel = '';
+        if (nonEmpty.length === 1 && /time\s*sheet/i.test(nonEmpty[0])) {
+          isTimeSheet = true; tsLabel = nonEmpty[0];
+        }
+        if (!isTimeSheet) {
+          row.forEach(function(v) {
+            if (/^time\s*sheet\s*\d+/i.test(v)) { isTimeSheet = true; tsLabel = v; }
+          });
+        }
+
+        rawRows.push({ values: row, nonEmpty: nonEmpty, isTimeSheet: isTimeSheet, tsLabel: tsLabel });
+      }
+
+      // Find the real column header row (first row with >= 5 non-empty cells, not a time sheet)
+      for (var i = 0; i < rawRows.length; i++) {
+        if (!rawRows[i].isTimeSheet && rawRows[i].nonEmpty.length >= 5) {
+          headerRowIdx = i;
+          headerRow = rawRows[i].values;
+          break;
+        }
+      }
+      if (headerRowIdx < 0 || headerRow.length === 0) return;
+
+      var headerLine = headerRow.join('\t');
+
+      // ── Detect merged side-label crew sections (col 0 with sparse "Crew N"/"Support" values) ──
+      // This format has col A merged across crew rows with labels like "Support", "Crew 1", "Crew 2"
+      // Only the first row of each merge has a value; the rest are empty.
+      var hasMergedSideLabels = false;
+      var sideLabels = []; // [{rowIdx, label}]
+      rawRows.forEach(function(rr, idx) {
+        if (idx <= headerRowIdx) return;
+        var colA = (rr.values[0] || '').trim();
+        if (colA && /^(crew\s*\d*|support|group\s*\d*)/i.test(colA)) {
+          sideLabels.push({ rowIdx: idx, label: colA });
+        }
+      });
+      if (sideLabels.length >= 1) hasMergedSideLabels = true;
+
+      // ── Strategy 1: crew-lead assignment column ──
+      // Detect a column whose header contains both "crew" and one of "lead/foreman/name/first/last"
+      // AND whose values are full names (contain a space), indicating person assignment.
+      // EXCLUDE col 0 — it often contains section labels like "Crew 1", not person names.
+      var crewLeadAssignColIdx = -1;
+      headerRow.forEach(function(h, i) {
+        if (i === 0) return; // skip col 0 — section labels, not crew-lead names
+        var hl = h.toLowerCase();
+        if (hl.indexOf('crew') >= 0 && (hl.indexOf('lead') >= 0 || hl.indexOf('foreman') >= 0 || hl.indexOf('name') >= 0 || hl.indexOf('first') >= 0 || hl.indexOf('last') >= 0)) {
+          crewLeadAssignColIdx = i;
+        }
+      });
+      // Verify at least one data value in this column looks like a full name (has a space)
+      // AND that most values in the column are non-empty (rules out sparse section-label columns)
+      if (crewLeadAssignColIdx >= 0) {
+        var colVals = rawRows.filter(function(rr, idx){ return idx > headerRowIdx && rr.nonEmpty.length >= 2; })
+                             .map(function(rr){ return (rr.values[crewLeadAssignColIdx] || '').trim(); });
+        var filledVals = colVals.filter(function(v){ return v.length > 0; });
+        var nameVals   = filledVals.filter(function(v){ return v.indexOf(' ') >= 0; });
+        // Must have names in >50% of rows AND names must look like people (not "Crew 1")
+        var personLike = nameVals.filter(function(v){ return !/^(crew|support|group)\s*\d*/i.test(v); });
+        if (personLike.length === 0 || filledVals.length < colVals.length * 0.4) {
+          crewLeadAssignColIdx = -1;
+        }
+      }
+
+      if (hasMergedSideLabels) {
+        // ── Strategy 1b: merged side-label sections ──
+        // Split on each side-label row; all rows until next label belong to that crew
+        var currentLabel2 = sideLabels.length > 0 ? sideLabels[0].label : 'Crew 1';
+        var currentRows2 = [];
+        var nextLabelIdx = 0;
+
+        function flushSideLabel() {
+          if (currentRows2.length === 0) return;
+          var lines = [headerLine].concat(currentRows2.map(function(r){ return r.join('\t'); }));
+          allChunks.push({ label: f.name+' / '+currentLabel2, text: '=== FILE: '+f.name+' | '+currentLabel2+' ===\n'+lines.join('\n') });
+          currentRows2 = [];
+        }
+
+        rawRows.forEach(function(rr, idx) {
+          if (idx <= headerRowIdx || rr.nonEmpty.length < 2) return;
+          // Check if this row starts a new section
+          var isSectionStart = sideLabels.some(function(sl){ return sl.rowIdx === idx; });
+          if (isSectionStart && currentRows2.length > 0) {
+            flushSideLabel();
+            // Find the label for this row
+            var sl = sideLabels.filter(function(s){ return s.rowIdx === idx; })[0];
+            currentLabel2 = sl ? sl.label : currentLabel2;
+          } else if (isSectionStart) {
+            var sl2 = sideLabels.filter(function(s){ return s.rowIdx === idx; })[0];
+            if (sl2) currentLabel2 = sl2.label;
+          }
+          // Include row but strip the col A section label so it doesn't confuse the model
+          var rowVals = rr.values.slice();
+          if (rowVals[0] && /^(crew\s*\d*|support|group\s*\d*)/i.test(String(rowVals[0]))) {
+            rowVals = rowVals.slice(1); // remove side label col
+          }
+          if (rowVals.filter(function(v){ return v; }).length >= 2) {
+            currentRows2.push(rowVals);
+          }
+        });
+        flushSideLabel();
+
+      } else if (crewLeadAssignColIdx >= 0) {
+        // Group rows by the crew lead name in that column
+        var crewMap = {}, crewOrderArr = [];
+        rawRows.forEach(function(rr, idx) {
+          if (idx <= headerRowIdx || rr.isTimeSheet || rr.nonEmpty.length < 2) return;
+          var crewVal = (rr.values[crewLeadAssignColIdx] || '').trim() || 'UNKNOWN';
+          if (!crewMap[crewVal]) { crewMap[crewVal] = []; crewOrderArr.push(crewVal); }
+          crewMap[crewVal].push(rr.values);
+        });
+        crewOrderArr.forEach(function(crewVal) {
+          var lines = [headerLine].concat(crewMap[crewVal].map(function(r){ return r.join('\t'); }));
+          allChunks.push({ label: f.name+' / Crew Lead: '+crewVal, text: '=== FILE: '+f.name+' | Crew Lead: '+crewVal+' ===\n'+lines.join('\n') });
+        });
+
+      } else {
+        // ── Strategy 2: dedicated crew-number column ──
+        var crewColIdx = -1;
+        headerRow.forEach(function(h, i) {
+          if (i === 0) return; // skip col 0 — may be section labels
+          if (h.toLowerCase().indexOf('crew') >= 0) crewColIdx = i;
+        });
+
+        // ── Strategy 3: Time Sheet separators ──
+        var hasTimeSheets = rawRows.some(function(rr) { return rr.isTimeSheet; });
+
+        if (crewColIdx >= 0) {
+          var crewMap2 = {}, crewOrderArr2 = [];
+          rawRows.forEach(function(rr, idx) {
+            if (idx <= headerRowIdx || rr.isTimeSheet || rr.nonEmpty.length < 2) return;
+            var crewVal = (rr.values[crewColIdx] || '').trim() || 'UNKNOWN';
+            if (!crewMap2[crewVal]) { crewMap2[crewVal] = []; crewOrderArr2.push(crewVal); }
+            crewMap2[crewVal].push(rr.values);
+          });
+          crewOrderArr2.forEach(function(crewVal) {
+            var lines = [headerLine].concat(crewMap2[crewVal].map(function(r){ return r.join('\t'); }));
+            allChunks.push({ label: f.name+' / Crew: '+crewVal, text: '=== FILE: '+f.name+' | Crew: '+crewVal+' ===\n'+lines.join('\n') });
+          });
+
+        } else if (hasTimeSheets) {
+          var currentLabel = '';
+          var currentRows = [];
+          var fileChunks = []; // collect this file's chunks before merging support
+
+          function flushTimeSheet() {
+            if (currentRows.length === 0) return;
+            var lbl = currentLabel || ('Crew '+(fileChunks.length+1));
+            var lines = [headerLine].concat(currentRows.map(function(r){ return r.join('\t'); }));
+            fileChunks.push({ label: f.name+' / '+lbl, text: '=== FILE: '+f.name+' | '+lbl+' ===\n'+lines.join('\n'), rows: currentRows.slice() });
+            currentRows = [];
+          }
+
+          rawRows.forEach(function(rr, idx) {
+            if (idx <= headerRowIdx) return;
+            if (rr.isTimeSheet) {
+              flushTimeSheet();
+              currentLabel = rr.tsLabel;
+            } else if (rr.nonEmpty.length >= 2) {
+              currentRows.push(rr.values);
+            }
+          });
+          flushTimeSheet();
+
+          // Merge support-role-only chunks into a single Support chunk
+          // A chunk is "support-only" if every row's Classification col matches support keywords
+          var classColIdx2 = -1;
+          headerRow.forEach(function(h, i) {
+            if (/classif|position|title|role/i.test(h)) classColIdx2 = i;
+          });
+          var supportKeywords = /superintendent|general\s*foreman|\bGF\b|mechanic|safety|manager|coordinator/i;
+
+          function isSupport(rows) {
+            if (!rows || rows.length === 0) return false;
+            return rows.every(function(r) {
+              var cls = classColIdx2 >= 0 ? String(r[classColIdx2] || '') : '';
+              return supportKeywords.test(cls);
+            });
+          }
+
+          var supportRows = [];
+          var supportFound = false;
+          fileChunks.forEach(function(fc) {
+            if (isSupport(fc.rows)) {
+              if (fc.rows.length <= 3) {
+                // Small fragment — merge into shared support pool
+                supportRows = supportRows.concat(fc.rows);
+                supportFound = true;
+              } else {
+                // Self-contained support group — keep as its own crew
+                allChunks.push({ label: fc.label, text: fc.text });
+              }
+            } else {
+              allChunks.push({ label: fc.label, text: fc.text });
+            }
+          });
+          if (supportFound) {
+            var SUPPORT_BATCH2 = 20;
+            for (var si2 = 0; si2 < supportRows.length; si2 += SUPPORT_BATCH2) {
+              var batch2 = supportRows.slice(si2, si2 + SUPPORT_BATCH2);
+              var lines2 = [headerLine].concat(batch2.map(function(r){ return r.join('\t'); }));
+              var bn2 = Math.floor(si2 / SUPPORT_BATCH2) + 1;
+              var lbl2 = supportRows.length <= SUPPORT_BATCH2 ? f.name+' / Support' : f.name+' / Support (part '+bn2+')';
+              allChunks.unshift({ label: lbl2, text: '=== FILE: '+f.name+' | Support'+(supportRows.length > SUPPORT_BATCH2 ? ' part '+bn2 : '')+' ===\n'+lines2.join('\n') });
+            }
+          }
+
+        } else {
+          var dataRows = rawRows.filter(function(rr, idx){ return idx > headerRowIdx && !rr.isTimeSheet; });
+
+          // ── Strategy 4: blank-row group detection ──
+          // When crews are separated by blank rows (no time sheet headers, no crew# col),
+          // each non-empty block is one crew. Support pockets are merged.
+          // Detect: multiple blank rows interspersed with data blocks.
+          var blankCount = dataRows.filter(function(rr){ return rr.nonEmpty.length === 0; }).length;
+          var nonBlankCount = dataRows.filter(function(rr){ return rr.nonEmpty.length >= 2; }).length;
+          var hasBlankSeparators = blankCount >= 2 && blankCount < nonBlankCount;
+
+          // Also need a classification col to identify support rows
+          var classColIdx = -1;
+          headerRow.forEach(function(h, i) {
+            var hl = h.toLowerCase();
+            if (hl.indexOf('classif') >= 0 || hl.indexOf('position') >= 0 || hl.indexOf('title') >= 0) classColIdx = i;
+          });
+
+          var lineForeman = /\bforeman\b/i;
+          var supportKw   = /general\s*foreman|superintendent|\bGF\b|mechanic|safety|coordinator/i;
+
+          if (hasBlankSeparators) {
+            // Split into blank-separated groups
+            var blankGroups = [], bgCurrent = [];
+            dataRows.forEach(function(rr) {
+              if (rr.nonEmpty.length === 0) {
+                if (bgCurrent.length > 0) { blankGroups.push(bgCurrent); bgCurrent = []; }
+              } else if (rr.nonEmpty.length >= 2) {
+                bgCurrent.push(rr);
+              }
+            });
+            if (bgCurrent.length > 0) blankGroups.push(bgCurrent);
+
+            // Separate support groups from line crew groups.
+            // Only MERGE support groups that are small isolated fragments (1-2 rows) —
+            // these are stray GF/Mechanic rows that belong to the overall support crew.
+            // If a support group has 3+ rows it's already self-contained → treat as its own crew.
+            var bgSupportRows = [], bgChunkNum = 0;
+            blankGroups.forEach(function(grp) {
+              var allSupport = classColIdx >= 0 && grp.every(function(rr){
+                var cls = String(rr.values[classColIdx] || '').trim();
+                return cls === '' || supportKw.test(cls);
+              }) && grp.some(function(rr){
+                return supportKw.test(String(rr.values[classColIdx] || ''));
+              });
+
+              if (allSupport && grp.length <= 3) {
+                // Small fragment — merge into the shared support pool
+                bgSupportRows = bgSupportRows.concat(grp);
+              } else if (allSupport) {
+                // Self-contained support group — treat as its own crew chunk
+                bgChunkNum++;
+                var lines = [headerLine].concat(grp.map(function(rr){ return rr.values.join('\t'); }));
+                allChunks.push({ label: f.name+' / Support Crew '+bgChunkNum, text: '=== FILE: '+f.name+' | Support Crew '+bgChunkNum+' ===\n'+lines.join('\n') });
+              } else {
+                bgChunkNum++;
+                var lines = [headerLine].concat(grp.map(function(rr){ return rr.values.join('\t'); }));
+                allChunks.push({ label: f.name+' / Crew '+bgChunkNum, text: '=== FILE: '+f.name+' | Crew '+bgChunkNum+' ===\n'+lines.join('\n') });
+              }
+            });
+            // Prepend merged support chunk — split into batches of 20 if very large
+            if (bgSupportRows.length > 0) {
+              var SUPPORT_BATCH = 20;
+              for (var si = 0; si < bgSupportRows.length; si += SUPPORT_BATCH) {
+                var batch = bgSupportRows.slice(si, si + SUPPORT_BATCH);
+                var lines = [headerLine].concat(batch.map(function(rr){ return rr.values.join('\t'); }));
+                var batchNum = Math.floor(si / SUPPORT_BATCH) + 1;
+                var lbl = bgSupportRows.length <= SUPPORT_BATCH ? f.name+' / Support' : f.name+' / Support (part '+batchNum+')';
+                allChunks.unshift({ label: lbl, text: '=== FILE: '+f.name+' | Support'+(bgSupportRows.length > SUPPORT_BATCH ? ' part '+batchNum : '')+' ===\n'+lines.join('\n') });
+              }
+            }
+
+          } else {
+          // ── Strategy 5: foreman/GF row as crew boundary ──
+          var foremanKeywords = /general\s*foreman|superintendent|crew\s*foreman|\bGF\b/i;
+          var hasForeman = classColIdx >= 0 && dataRows.some(function(rr) {
+            return rr.nonEmpty.length >= 2 && foremanKeywords.test(String(rr.values[classColIdx] || ''));
+          });
+
+          if (hasForeman) {
+            var currentCrewRows = [];
+            var crewChunkNum = 0;
+
+            function flushForeman() {
+              if (currentCrewRows.length === 0) return;
+              crewChunkNum++;
+              var lines = [headerLine].concat(currentCrewRows.map(function(rr){ return rr.values.join('\t'); }));
+              allChunks.push({ label: f.name+' / Crew '+crewChunkNum, text: '=== FILE: '+f.name+' | Crew '+crewChunkNum+' ===\n'+lines.join('\n') });
+              currentCrewRows = [];
+            }
+
+            dataRows.filter(function(rr){ return rr.nonEmpty.length >= 2; }).forEach(function(rr) {
+              var classVal = String(rr.values[classColIdx] || '');
+              if (foremanKeywords.test(classVal) && currentCrewRows.length > 0) {
+                flushForeman();
+              }
+              currentCrewRows.push(rr);
+            });
+            flushForeman();
+          } else {
+            // ── Strategy 6: fixed-size block fallback ──
+            var nonBlankRows = dataRows.filter(function(rr){ return rr.nonEmpty.length >= 2; });
+            var CHUNK_SIZE = 8;
+            for (var i = 0; i < nonBlankRows.length; i += CHUNK_SIZE) {
+              var slice = nonBlankRows.slice(i, i + CHUNK_SIZE);
+              var lines = [headerLine].concat(slice.map(function(rr){ return rr.values.join('\t'); }));
+              var chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
+              allChunks.push({ label: f.name+' / Block '+chunkNum, text: '=== FILE: '+f.name+' | Block '+chunkNum+' ===\n'+lines.join('\n') });
+            }
+          }
+          } // end Strategy 5/6
+        }
+      }
+
+    } catch(e) {
+      allChunks.push({ label: f.name+' (error)', text: '[Error reading '+f.name+': '+e.message+']' });
+    }
+  });
+
+  if (allChunks.length === 0) {
+    var fallback = contractorFiles.map(function(f){ return xlsxToText(f.buf, f.name); }).join('\n\n');
+    allChunks.push({ label: 'all files', text: fallback });
+  }
+
+  return allChunks;
+}
+
+// ── SYSTEM PROMPT ──
+var SYSTEM_PROMPT = [
+'You are a utility workforce data processor. Return ONLY raw JSON. CRITICAL: Do NOT use markdown code fences. Do NOT write ```json or ```. Your response must start with { and end with } and nothing else.',
+'',
+'ROSTER ROW KEYS: COMPANY, CONTRACTOR, "UNION / NON UNION", "STORM NAME", "CREW NUMBER", "RESOURCE NAME OR EQUIPMENT ID", CLASSIFICATION, "RESOURCE / EQUIPMENT", "LODGING REQUIRED", "LODGING SIZE", "PHONE NUMBER", "EMAIL ADDRESS", GENDER, LOCATION, "TEAM LEAD", "CREW LEAD"',
+'',
+'NAME ASSEMBLY — CRITICAL:',
+'- Source files often have separate "Last Name" and "First Name" columns.',
+'- RESOURCE NAME OR EQUIPMENT ID must ALWAYS be "First Last" order (First Name first, Last Name second).',
+'- Example: source "Sutton | Brandon" → output "Brandon Sutton". Source "Corey | Andrew" → output "Andrew Corey".',
+'- Never reverse to Last-First order under any circumstances.',
+'',
+'RULES:',
+'- Use provided PREFIX for crew numbers. Line crews: PREFIX-001, PREFIX-002. Support: PREFIX-SUPPORT',
+'- General Foreman/Superintendent + mechanics + safety = SUPPORT crew. Foreman + linemen + their equipment = line crews',
+'- RESOURCE/EQUIPMENT: "RESOURCE" for people, "EQUIPMENT" for equipment',
+'- LODGING REQUIRED: "YES" for RESOURCE, empty for EQUIPMENT',
+'- LODGING SIZE: "SINGLE" for General Foreman/Superintendent/Safety, "DOUBLE" for other RESOURCE, empty for EQUIPMENT',
+'- GENDER: MALE default. FEMALE only for clearly female names.',
+'- TEAM LEAD: "Yes" for General Foreman/Superintendent only. CREW LEAD: "Yes" for Foreman only.',
+'- ROSTER CLASSIFICATION: ALWAYS use the closest matching value from the CLASSIFICATION column in the CLASSIFICATIONS tab provided above. Never invent a classification. If the source roster says "Journeyman Lineman", "JL", "Lineman", or similar — find the best match in the CLASSIFICATIONS tab and use that exact value. If source says "Foreman" and the tab has "Crew Foreman", use "Crew Foreman". If source says "Groundman" and tab has "Groundman w/ CDL-B", use that. When in doubt, pick the closest match — never leave it blank or use a value not in the tab.',
+'- ABBREVIATION MAPPING (apply these to BOTH people and equipment before matching): "JL" = Journeyman Lineman → match to "Journeyman" or "Journeyman Lineman" or "Lead Lineman" in the tab. "GF" = General Foreman → match to "General Foreman" or "General Foreman (NWGF)". "OP" = Operator → match to "Operator". "Safety" → match to "Safety Coordinator" or "Safety Professional" (prefer "Safety Coordinator" if both exist). "Mechanic" → "Fleet Mechanic". "Foreman" → "Foreman".',
+'- EQUIPMENT TYPE MAPPING: "Pickup 4X4" or "Pickup" → "Pickup". "Bucket 52\'-60\'" or "Bucket 80\'" or "Rear Lot Cart Bucket" → "Double Bucket / High Ranger" or "Material Handler" (use whichever is in the tab). "Digger" or "Rear lot cart Digger" → "Digger Derrick". "Mechanic Truck 4X4" or "Mechanic Truck" → "Fleet Mechanic Truck". "Office Trailer" or "Supply Trailer" or "Pole trailer" → "Trailer". "Dump Truck 4X4" → use the closest match in the tab or flag in needs_clarification.',
+'- LOCATION: city/state when available. Names: First Last format.',
+'',
+'COMBINED ROW FORMAT (Time Sheet style): Some rosters have person AND equipment on the same row.',
+'- Columns like "Equipment Type" and "Equipment #" (or "Equipment Number") on the same row as a person mean that person is assigned that equipment.',
+'- Always create TWO separate output rows from such a combined row: one RESOURCE row for the person, one EQUIPMENT row for the equipment.',
+'- EQUIPMENT row: RESOURCE NAME OR EQUIPMENT ID = Equipment # value (or Equipment Number). CLASSIFICATION = Equipment Type value matched to nearest value in CLASSIFICATIONS tab. RESOURCE/EQUIPMENT = "EQUIPMENT".',
+'- If a row has equipment columns but NO person name (Last Name is empty), create ONLY the EQUIPMENT row.',
+'- If a row has a person name but NO equipment columns, create ONLY the RESOURCE row.',
+'',
+'CREW-LEAD ASSIGNMENT FORMAT: Some rosters assign every person to a crew via a "CrewLead First Name and Last Name" column (or similar).',
+'- The person whose own name matches the crew lead column value is the Foreman/Crew Lead for that crew.',
+'- All other rows with the same crew lead name are members of that crew.',
+'- These rosters often have separate vehicle and equipment columns on each person\'s row:',
+'  * "Resource/VehicleType" or "Vehicle Type" + "Vehicle ID" = the vehicle assigned to that person → create an EQUIPMENT row in ROSTER',
+'  * "Resource/EquipmentType" or "Equipment Type" + "Equipment ID" = additional equipment → create another EQUIPMENT row',
+'  * "State/Province" adjacent to Vehicle ID = the vehicle registration state → use for ARCOS Vehicles State/Province and Storm Manager License State',
+'  * "TeamLead=General Foreman" column = "Yes" means this person is the General Foreman (TEAM LEAD)',
+'  * "CrewLead=Foreman" column = "Yes" means this person is the Foreman (CREW LEAD)',
+'  * "ResourceTypes" column = the ARCOS resource type for this person',
+'- PHONE NUMBER: use the Phone/Cell column value.',
+'- LOCATION: use "Traveling from City, State" columns if present.',
+'',
+'EQUIPMENT ID PREFIX HINTS — use these to improve classification matching when Equipment Type is ambiguous:',
+'- ID starting with "BT" (e.g. BT-12, BT42) → Bucket Truck / Basket, Material Handler 51\'- 60\' range',
+'- ID starting with "ST" (e.g. ST-5, ST09) → Bucket / Basket, Material Handler 35\'- 50\' range',
+'- When Equipment Type says "Bucket 52\' - 60\'" or similar → match to the 51\'- 60\' classification in the CLASSIFICATIONS tab',
+'- When Equipment Type says "Bucket 52\' - 60\'" and ID starts with BT → confirms 51\'- 60\' range classification',
+'- Apply these hints in addition to the CLASSIFICATIONS tab — the tab is still the source of truth for exact classification values.',
+'',
+'LICENSE PLATE EXTRACTION:',
+'- Scan all columns in the source row for license plate data. It may appear in columns labeled "License", "License #", "License Plate", "Plate #", "Tag #", or similar, or as a value that looks like a plate (letters+numbers, 2-8 chars, e.g. "ABC1234", "XY-4521").',
+'- If found, capture the plate number and the state/province if present.',
+'- Store plate on EQUIPMENT rows in the ROSTER as a note in the LOCATION field prefixed with "PLATE:" if no dedicated plate column exists (e.g. "PLATE:ABC1234").',
+'- For ARCOS Vehicles: populate "License Plate" and "State/Province" columns with any plate data found.',
+'- For Storm Manager: populate "License Plate" and "License State" columns with any plate data found.',
+'- If no plate is found, leave those columns empty (do NOT use the Equipment ID as a plate substitute unless explicitly instructed).',
+'',
+'ARCOS EMPLOYEES KEYS: "First Name","Last Name","e-Mail","Share e-Mail",Phone,"Share Phone",ID,"CREW NUMBER",Location,Gender,"Team Lead","Crew Lead","Resource Types","Resource Types 2","Resource Types 3",Status',
+'ARCOS EMPLOYEES "Resource Types" column: populate with the value from the ARCOS RESOURCE TYPES column in the CLASSIFICATIONS tab that matches this person\'s role.',
+'ARCOS EMPLOYEES "Resource Types 2" column: populate with the value from the CLASSIFICATION column in the CLASSIFICATIONS tab that matches this person\'s role.',
+'ARCOS VEHICLES KEYS: "Resource Name","Resource Type","License Plate","State/Province","CREW NUMBER",Location',
+'ARCOS VEHICLES: ALL motorized/drivable equipment belongs here — Pickups, Bucket Trucks, Material Handlers, Digger Derricks, Line Trucks, Mechanic Trucks, Dump Trucks, and any other self-propelled vehicle.',
+'ARCOS EQUIPMENT KEYS: "Resource Name","Resource Type","CREW NUMBER",Location',
+'ARCOS EQUIPMENT: ONLY non-motorized, non-drivable items — Trailers, Carts, Back Yard Machines, Flex Track, and similar towed or stationary equipment. If it has an engine or drives on a road → Vehicles. If it is towed or stationary → Equipment.',
+'ARCOS CREWS KEYS: "Crew Name","Location","Resource Group","Resource Type","Named Resource","Team Lead","Crew Lead"',
+'ARCOS CREWS RULES: One row per resource (person or equipment) matching the roster. Crew Name = CREW NUMBER (e.g. PREFIX-001). Location = that resource location (city/state). Resource Group = "Distribution Line". Resource Type (ARCOS ONLY): General Foreman->Distribution Line Resource Strike Team Leader, Foreman->Distribution Line Crew Leader, JL/Groundman/EO->Distribution Line Worker, Mechanic->Fleet Mechanic, Safety->Safety, Bucket Truck->Material Handler - (4WD), Digger Derrick->Digger Derrick - (4WD), Pickup->Pick-up (4WD), Mechanic Truck->Fleet Mechanic Truck. Named Resource = that person or equipment name/ID. Team Lead = "Yes" for General Foreman row only. Crew Lead = "Yes" for Foreman row only.',
+'STORM MANAGER KEYS: "Crew ID","First Name","Last Name",Classification,"Resource Type",Gender,"Crew Request Lodging","Equipment ID","License Plate","License State","Equipment Type","Equipment Sub Type"',
+'STORM MANAGER Classification: use the CLASSIFICATION value from the CLASSIFICATIONS tab (same as ROSTER). Do NOT use ARCOS Resource Types in Storm Manager.',
+'STORM MANAGER Resource Type: General Foreman->General Foreman, Foreman->Foreman, JL/Groundman/EO->Resource, Mechanic/Safety->Support',
+'STORM MANAGER Equipment Sub Type: for equipment rows, populate with the CLASSIFICATION value from the ROSTER for that equipment (the same value in the CLASSIFICATION column of the ROSTER tab).'
+].join('\n');
+
+// ── CLARIFICATION UI ──
+// Pauses processing and shows the user dropdown questions for ambiguous classifications.
+// callback(answers) is called with [{person, answer}] when user submits.
+function askClarifications(items, chunkIdx, chunkLabel, callback) {
+  // Normalise items — model sometimes uses different field names
+  items = items.map(function(item) {
+    return {
+      person:       item.person || item.name || item.resource || item.id || '(unknown)',
+      source_value: item.source_value || item.source || item.original || item.value || item.classification || '(unknown)',
+      field:        item.field || 'CLASSIFICATION',
+      row_context:  item.row_context || item.context || item.row || '',
+      options:      item.options || item.choices || item.suggestions || []
+    };
+  }).filter(function(item) {
+    // Skip items where source_value is undefined/unknown and options are empty
+    return item.source_value !== '(unknown)' || item.options.length > 0 || item.person !== '(unknown)';
+  });
+
+  if (items.length === 0) { callback([]); return; }
+
+  rmThinking();
+
+  // Get classification options from the CLASSIFICATIONS tab (read from clientBuf)
+  var tabOptions = [];
+  try {
+    var wb = XLSX.read(clientBuf, {type:'array'});
+    var clsSheet = wb.Sheets['CLASSIFICATIONS'];
+    if (clsSheet) {
+      var range = XLSX.utils.decode_range(clsSheet['!ref']);
+      for (var r = range.s.r + 1; r <= range.e.r; r++) {
+        var cell = clsSheet[XLSX.utils.encode_cell({r:r, c:0})];
+        if (cell && cell.v) tabOptions.push(String(cell.v).trim());
+      }
+    }
+  } catch(e) {}
+
+  var container = document.getElementById('clarificationBox');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'clarificationBox';
+    document.getElementById('msgs').appendChild(container);
+  }
+  container.style.cssText = 'background:#1a1a0a;border:2px solid #f0a500;border-radius:8px;padding:16px;margin:12px 0;';
+  container.innerHTML = '';
+
+  // Header
+  var title = document.createElement('div');
+  title.style.cssText = 'color:#f0a500;font-family:"Rajdhani",sans-serif;font-weight:700;font-size:14px;letter-spacing:1px;margin-bottom:4px;';
+  title.textContent = '⚠ CLASSIFICATION CLARIFICATION NEEDED';
+  container.appendChild(title);
+
+  var subtitle = document.createElement('div');
+  subtitle.style.cssText = 'color:#7a9ab8;font-size:11px;font-family:"Share Tech Mono",monospace;margin-bottom:12px;border-bottom:1px solid #2a3a50;padding-bottom:8px;';
+  subtitle.textContent = 'Crew ' + (chunkIdx+1) + ' — ' + chunkLabel + ' — ' + items.length + ' item(s) need manual classification';
+  container.appendChild(subtitle);
+
+  var selects = [];
+  items.forEach(function(item, i) {
+    var row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:14px;padding:10px;background:#0f1318;border-radius:6px;border-left:3px solid #f0a500;';
+
+    // Equipment ID / Person name
+    var personEl = document.createElement('div');
+    personEl.style.cssText = 'color:#e8f0f8;font-size:13px;font-weight:600;font-family:"Rajdhani",sans-serif;margin-bottom:3px;';
+    var personLabel = (item.person && item.person !== '(unknown)') ? item.person : '(equipment ID unknown)';
+    personEl.textContent = '📋 Equipment/Person ID: ' + personLabel;
+    row.appendChild(personEl);
+
+    // What the source file said + how to find it
+    var sourceEl = document.createElement('div');
+    sourceEl.style.cssText = 'color:#a0b4c8;font-size:11px;font-family:"Share Tech Mono",monospace;margin-bottom:4px;';
+    sourceEl.textContent = 'Source roster says: "' + item.source_value + '"';
+    row.appendChild(sourceEl);
+
+    // How to find it hint
+    var hintEl = document.createElement('div');
+    hintEl.style.cssText = 'color:#f0a500;font-size:11px;font-family:"Share Tech Mono",monospace;margin-bottom:8px;';
+    // Build a helpful hint based on what we know
+    var hint = 'To find in roster: search Equipment Type column for "' + item.source_value + '"';
+    if (personLabel !== '(equipment ID unknown)') {
+      hint = 'To find in roster: look for Equipment # "' + personLabel + '" or Equipment Type "' + item.source_value + '"';
+    }
+    if (item.row_context) {
+      hint += ' — Row context: ' + item.row_context;
+    }
+    hintEl.textContent = '🔍 ' + hint;
+    row.appendChild(hintEl);
+
+    // Label
+    var lbl = document.createElement('div');
+    lbl.style.cssText = 'color:#7a9ab8;font-size:11px;margin-bottom:4px;';
+    lbl.textContent = 'Select the correct classification:';
+    row.appendChild(lbl);
+
+    // Dropdown with all tab options + model suggestions highlighted
+    var sel = document.createElement('select');
+    sel.style.cssText = 'background:#0a0c10;color:#e8f0f8;border:1px solid #243447;border-radius:4px;padding:6px 10px;font-size:12px;width:100%;max-width:480px;';
+
+    // Add model-suggested options first (highlighted)
+    if (item.options.length > 0) {
+      var grp1 = document.createElement('optgroup');
+      grp1.label = '— Suggested matches —';
+      item.options.forEach(function(opt) {
+        var o = document.createElement('option');
+        o.value = opt; o.textContent = opt;
+        grp1.appendChild(o);
+      });
+      sel.appendChild(grp1);
+    }
+
+    // Add all tab options
+    var allOpts = tabOptions.length > 0 ? tabOptions : item.options;
+    if (allOpts.length > 0) {
+      var grp2 = document.createElement('optgroup');
+      grp2.label = '— All classifications —';
+      allOpts.forEach(function(opt) {
+        if (item.options.indexOf(opt) < 0) { // don't duplicate suggestions
+          var o = document.createElement('option');
+          o.value = opt; o.textContent = opt;
+          grp2.appendChild(o);
+        }
+      });
+      sel.appendChild(grp2);
+    }
+
+    // Type my own
+    var other = document.createElement('option');
+    other.value = '__other__'; other.textContent = '— type my own —';
+    sel.appendChild(other);
+    row.appendChild(sel);
+
+    // Text input (shown when no options OR when "type my own" selected)
+    var textInput = document.createElement('input');
+    textInput.type = 'text';
+    textInput.placeholder = 'Type classification value...';
+    textInput.value = item.source_value !== '(unknown)' ? item.source_value : '';
+    var autoType = tabOptions.length === 0 && item.options.length === 0;
+    if (autoType) { sel.value = '__other__'; sel.style.display = 'none'; }
+    textInput.style.cssText = 'background:#0a0c10;color:#e8f0f8;border:1px solid #243447;border-radius:4px;padding:6px 10px;font-size:12px;width:100%;max-width:480px;margin-top:4px;box-sizing:border-box;display:' + (autoType ? 'block' : 'none') + ';';
+    (function(s, t) {
+      s.addEventListener('change', function() {
+        t.style.display = s.value === '__other__' ? 'block' : 'none';
+        if (s.value === '__other__') { t.value = ''; t.focus(); }
+      });
+    })(sel, textInput);
+    row.appendChild(textInput);
+
+    container.appendChild(row);
+    selects.push({ sel: sel, txt: textInput, item: item });
+  });
+
+  var btn = document.createElement('button');
+  btn.textContent = 'Apply & Continue Processing →';
+  btn.style.cssText = 'margin-top:8px;background:#1e90ff;color:#fff;border:none;border-radius:6px;padding:10px 24px;font-size:13px;font-family:"Rajdhani",sans-serif;font-weight:700;cursor:pointer;letter-spacing:1px;width:100%;max-width:300px;';
+  btn.addEventListener('click', function() {
+    var answers = selects.map(function(s) {
+      var val = s.sel.value === '__other__' ? s.txt.value.trim() : s.sel.value;
+      if (s.item.source_value && s.item.source_value !== '(unknown)' && val) {
+        var srcKey = s.item.source_value.toLowerCase().trim();
+        clarificationMemory[srcKey] = val;
+        // Offer to save to master classifications for future runs
+        if (!masterClassifications[srcKey]) {
+          if (confirm('Save "' + s.item.source_value + '" → "' + val + '" to Master Classifications for future runs?')) {
+            masterClassifications[srcKey] = { standard: val, display: s.item.source_value };
+          }
+        }
+      }
+      return { person: s.item.person, answer: val };
+    });
+    container.innerHTML = '';
+    container.style.display = 'none';
+    addThinking();
+    callback(answers);
+  });
+  container.appendChild(btn);
+  container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// ── PROCESS ──
+document.getElementById('btnProc').addEventListener('click', function(){
+  // Clear previous download box before starting new run
+  var dlbox = document.getElementById('dlbox');
+  dlbox.classList.remove('show');
+  startProc();
+});
+
+function startProc() {
+  if (busy) return;
+  var co  = document.getElementById('qco').value.trim();
+  var ct  = document.getElementById('qct').value.trim();
+  var st  = document.getElementById('qst').value.trim();
+  var un  = document.getElementById('qun').value;
+  var pfx = document.getElementById('qpfx').value.trim().toUpperCase();
+  var op  = document.getElementById('qop').value;
+  var ts  = document.getElementById('qts').value;
+
+  if (!co || !ct || !un || !pfx || !op || !ts) {
+    addMsg('err','Fill in all deployment details: Company, Contractor, Union Status, Crew Prefix, Output Tabs, and Timesheets.');
+    return;
+  }
+
+  busy = true; setBusy(true); updateProg(2);
+  processingLog = { errors:[], warnings:[], duplicates:[], steps:[], info:[] };
+  processingLog.info.push('Run started: '+new Date().toLocaleString());
+  processingLog.info.push('Client: '+co+' | Contractor: '+ct+' | Storm: '+(st||'N/A')+' | Union: '+un+' | Prefix: '+pfx+' | Output: '+op.toUpperCase());
+  processingLog.info.push('Files: client='+clientName+' | contractor(s)='+contractorFiles.map(function(f){return f.name;}).join(', '));
+
+  var clientTxt = xlsxToText(clientBuf, clientName);
+  var crewChunks = xlsxToCrewChunks(contractorFiles, clientTxt);
+  processingLog.info.push('Detected ' + crewChunks.length + ' crew chunk(s) for per-crew processing');
+  addMsg('system', 'Detected ' + crewChunks.length + ' crew group(s) — processing each separately to avoid size limits.');
+
+  var deploymentMeta = [
+    'COMPANY: '+co,
+    'CONTRACTOR: '+ct,
+    'STORM NAME: '+(st||'(none)'),
+    'UNION STATUS: '+un,
+    'CREW NUMBER PREFIX: '+pfx+' (line crews: '+pfx+'-001, '+pfx+'-002 etc. Support: '+pfx+'-SUPPORT)',
+    ''
+  ].join('\n');
+
+  // Extract just the CLASSIFICATIONS section from clientTxt for compact reuse
+  var classificationsTxt = clientTxt; // clientTxt is already just the CLASSIFICATIONS tab
+
+  // Full header: deployment meta + classifications (sent on every chunk)
+  var deploymentHeaderFull    = deploymentMeta + classificationsTxt + '\n';
+  // Compact header for subsequent chunks: still includes classifications for matching,
+  // but omits any other client workbook context already seen
+  var deploymentHeaderCompact = deploymentMeta + classificationsTxt + '\n';
+
+  addMsg('user','Deployment:\n Client: '+co+'\n Contractor: '+ct+'\n Storm: '+(st||'N/A')+'\n Union: '+un+'\n Prefix: '+pfx+'\n Output: '+op.toUpperCase());
+  convHistory = [];
+  updateProg(3);
+
+  // ── STEP 1: ROSTER — one crew chunk at a time ──
+  var allPeopleRows = [];
+  var allEquipRows  = [];
+  var crewNumberCounter = 1;
+  clarificationMemory = {}; // reset for this run
+  // Pre-seed memory from master classifications so post-processing filter also applies them
+  Object.keys(masterClassifications).forEach(function(k) {
+    clarificationMemory[k] = masterClassifications[k].standard;
+  });
+
+  function processNextChunk(chunkIdx) {
+    if (chunkIdx >= crewChunks.length) {
+      return onAllChunksDone();
+    }
+
+    // Process up to CONCURRENCY chunks in parallel
+    var CONCURRENCY = 3;
+    var batch = [];
+    for (var i = chunkIdx; i < Math.min(chunkIdx + CONCURRENCY, crewChunks.length); i++) {
+      batch.push(i);
+    }
+
+    setStatus('&#128260;', 'Step 1 of 4: Crews ' + (chunkIdx+1) + '-' + Math.min(chunkIdx+CONCURRENCY, crewChunks.length) + ' of ' + crewChunks.length);
+
+    // Pre-assign crew numbers for this batch sequentially so there are no duplicates
+    var batchCrewNumbers = {};
+    batch.forEach(function(idx) {
+      var chunk = crewChunks[idx];
+      // Peek at chunk label to determine if support
+      var isSupport = /support/i.test(chunk.label);
+      if (!isSupport) {
+        batchCrewNumbers[idx] = pfx + '-' + pad(crewNumberCounter++);
+      } else {
+        batchCrewNumbers[idx] = pfx + '-SUPPORT';
+      }
+    });
+
+    // Fire all calls in parallel
+    var promises = batch.map(function(idx) {
+      var chunk = crewChunks[idx];
+      var chunkLabel = chunk.label;
+      var deploymentHeader = (idx === 0) ? deploymentHeaderFull : deploymentHeaderCompact;
+      var crewContext = deploymentHeader + chunk.text;
+      var assignedNumber = batchCrewNumbers[idx];
+
+      var usedNumbers = [];
+      allPeopleRows.forEach(function(r) { if(r['CREW NUMBER'] && usedNumbers.indexOf(r['CREW NUMBER'])<0) usedNumbers.push(r['CREW NUMBER']); });
+      // Add other batch assignments to avoid conflicts
+      Object.keys(batchCrewNumbers).forEach(function(k) {
+        var n = batchCrewNumbers[k];
+        if (usedNumbers.indexOf(n) < 0) usedNumbers.push(n);
+      });
+
+      var usedNote = '\nASSIGNED CREW NUMBER FOR THIS CHUNK: ' + assignedNumber + ' — use this exact number for all rows in this chunk.';
+
+      // Inject master classifications into prompt if available
+      var masterKeys = Object.keys(masterClassifications);
+      var masterNote = '';
+      if (masterKeys.length > 0) {
+        // Group by standard for a compact prompt
+        var masterGroups = {};
+        masterKeys.forEach(function(k) {
+          var std = masterClassifications[k].standard;
+          if (!masterGroups[std]) masterGroups[std] = [];
+          masterGroups[std].push(masterClassifications[k].display || k);
+        });
+        masterNote = '\nMASTER CLASSIFICATION DICTIONARY (use this to translate source values before matching to the client\'s CLASSIFICATIONS tab):\n' +
+          Object.keys(masterGroups).map(function(std) {
+            return '  "' + masterGroups[std].join('", "') + '" → standard category: "' + std + '"';
+          }).join('\n') + '\n';
+      }
+
+      // Inject previously confirmed classification mappings into the prompt
+      var memoryKeys = Object.keys(clarificationMemory);
+      var memoryNote = '';
+      if (memoryKeys.length > 0) {
+        memoryNote = '\nCONFIRMED CLASSIFICATION MAPPINGS (already answered — use these exactly, do NOT add to needs_clarification):\n' +
+          memoryKeys.map(function(k){ return '  "' + k + '" → "' + clarificationMemory[k] + '"'; }).join('\n') + '\n';
+      }
+
+      var combinedMsg = crewContext + usedNote + masterNote + memoryNote + '\n\nINSTRUCTION: Build BOTH people and equipment rows for this crew. Return JSON: {"roster":[...],"needs_clarification":[]}\n- "roster" array contains ALL rows — RESOURCE rows for people AND EQUIPMENT rows for vehicles/equipment.\n- THIS CHUNK IS EXACTLY ONE CREW. Assign ALL rows to crew number: ' + assignedNumber + '. Do not use any other crew number.\n- RESOURCE / EQUIPMENT = "RESOURCE" for people, "EQUIPMENT" for equipment/vehicles.\n- NAME ORDER: separate Last/First columns → combine as "First Last". NEVER Last-First.\n- RESOURCE NAME OR EQUIPMENT ID: for people = that person\'s own full name. For equipment = Equipment # or Vehicle ID (use Equipment Type if no number).\n- CLASSIFICATION: use closest matching value from CLASSIFICATIONS tab. If ambiguous, add to needs_clarification: [{"field":"CLASSIFICATION","source_value":"<exact text from source roster>","person":"<the Equipment # or Vehicle ID or person name from that row>","row_context":"<Last Name + First Name or Equipment Type + Equipment # to help locate in source file>","options":["<closest option 1>","<closest option 2>"]}]. ALWAYS populate "person" with the Equipment # or ID from that row — never leave it blank.\n- TEAM LEAD = "Yes" for General Foreman/Superintendent. CREW LEAD = "Yes" for Foreman.\n- LODGING REQUIRED = "YES" for RESOURCE, empty for EQUIPMENT. LODGING SIZE = "SINGLE" for GF/Superintendent/Safety, "DOUBLE" for other RESOURCE, empty for EQUIPMENT.\n- LICENSE PLATE: if any column has plate/tag/license data, store as "PLATE:XXXXX" in LOCATION on the EQUIPMENT row.';
+
+      return callAPIWithRetry([{role:'user', content:combinedMsg}])
+        .then(function(raw) {
+          return { idx: idx, chunkLabel: chunkLabel, rows: parseJSON(raw).roster || [], clarifications: parseJSON(raw).needs_clarification || [] };
+        })
+        .catch(function(e) {
+          // Retry once before skipping
+          return callAPIWithRetry([{role:'user', content:combinedMsg}])
+            .then(function(raw) {
+              return { idx: idx, chunkLabel: chunkLabel, rows: parseJSON(raw).roster || [], clarifications: parseJSON(raw).needs_clarification || [] };
+            })
+            .catch(function(e2) {
+              addMsg('err', 'Crew ' + (idx+1) + ' failed after retry: ' + e2.message + ' — skipping');
+              return { idx: idx, chunkLabel: chunkLabel, rows: [], clarifications: [] };
+            });
+        });
+    });
+
+    return Promise.all(promises).then(function(results) {
+      // Process results in index order to maintain crew ordering
+      results.sort(function(a,b){ return a.idx - b.idx; });
+
+      // Before showing any clarifications, apply remembered answers from earlier in this run
+      results.forEach(function(result) {
+        // Filter out clarification items already resolved by memory, and apply their answers
+        result.clarifications = (result.clarifications || []).filter(function(item) {
+          var src = (item.source_value || '').toLowerCase().trim();
+          if (src && clarificationMemory[src]) {
+            // Auto-apply the remembered answer to the matching row
+            result.rows.forEach(function(r) {
+              if ((r['RESOURCE NAME OR EQUIPMENT ID'] || '') === item.person) {
+                r['CLASSIFICATION'] = clarificationMemory[src];
+              }
+            });
+            return false; // already know the answer — skip dialog
+          }
+          return true;
+        });
+
+        // Also scan all rows: if the model used a raw source abbreviation as the classification
+        // (e.g. set cls="OP" instead of "Operator"), fix it using memory
+        result.rows.forEach(function(r) {
+          var cls = (r['CLASSIFICATION'] || '').trim().toLowerCase();
+          if (clarificationMemory[cls]) {
+            r['CLASSIFICATION'] = clarificationMemory[cls];
+          }
+        });
+      });
+
+      // Handle any remaining clarifications (sequential — can't parallelize interactive UI)
+      function processClarification(ri) {
+        if (ri >= results.length) return Promise.resolve();
+        var result = results[ri];
+        if (result.clarifications.length === 0) return processClarification(ri + 1);
+        return new Promise(function(resolve) {
+          askClarifications(result.clarifications, result.idx, result.chunkLabel, function(answers) {
+            answers.forEach(function(a) {
+              result.rows.forEach(function(r) {
+                if ((r['RESOURCE NAME OR EQUIPMENT ID'] || '') === a.person) r['CLASSIFICATION'] = a.answer;
+              });
+            });
+            resolve();
+          });
+        }).then(function(){ return processClarification(ri + 1); });
+      }
+
+      return processClarification(0).then(function() {
+        // Accumulate all rows
+        results.forEach(function(result) {
+          var rp = result.rows.filter(function(r){ return r['RESOURCE / EQUIPMENT'] !== 'EQUIPMENT'; });
+          var re = result.rows.filter(function(r){ return r['RESOURCE / EQUIPMENT'] === 'EQUIPMENT'; });
+          allPeopleRows = allPeopleRows.concat(rp);
+          allEquipRows  = allEquipRows.concat(re);
+          addMsg('system', 'Crew '+(result.idx+1)+'/'+crewChunks.length+': '+rp.length+' people + '+re.length+' equipment ('+result.chunkLabel+')');
+        });
+        return processNextChunk(chunkIdx + CONCURRENCY);
+      });
+    });
+  } // end processNextChunk
+
+  function onAllChunksDone() {
+    // Build final roster: for each crew, all RESOURCE rows first, then all EQUIPMENT rows.
+    // Preserve the crew order as they were processed.
+    var crewOrder = [];
+    var crewPeople = {};
+    var crewEquip  = {};
+
+    allPeopleRows.forEach(function(r) {
+      var cn = r['CREW NUMBER'] || '';
+      if (!crewPeople[cn]) { crewPeople[cn] = []; crewOrder.push(cn); }
+      crewPeople[cn].push(r);
+    });
+    allEquipRows.forEach(function(r) {
+      var cn = r['CREW NUMBER'] || '';
+      if (!crewEquip[cn]) crewEquip[cn] = [];
+      // Add crew to order if it only appeared in equipment (edge case)
+      if (!crewPeople[cn] && crewOrder.indexOf(cn) < 0) crewOrder.push(cn);
+      crewEquip[cn].push(r);
+    });
+
+    // Deduplicate crewOrder while preserving first-seen order
+    var seen = {};
+    crewOrder = crewOrder.filter(function(cn) {
+      if (seen[cn]) return false;
+      seen[cn] = true; return true;
+    });
+
+    var combined = [];
+    crewOrder.forEach(function(cn) {
+      (crewPeople[cn] || []).forEach(function(r) { combined.push(r); });
+      (crewEquip[cn]  || []).forEach(function(r) { combined.push(r); });
+    });
+
+    processingLog.steps.push('Step 1 complete: ' + allPeopleRows.length + ' people + ' + allEquipRows.length + ' equipment = ' + combined.length + ' total rows across ' + crewChunks.length + ' crew(s)');
+    addMsg('system', 'ROSTER total: ' + combined.length + ' rows (' + allPeopleRows.length + ' people, ' + allEquipRows.length + ' equipment)');
+
+    var rosterData = { roster: combined };
+
+    // ── DUPLICATE CHECK ──
+    // Only checks RESOURCE NAME OR EQUIPMENT ID field on the ROSTER tab.
+    // A duplicate is when the same name/ID appears on MORE THAN ONE distinct crew number —
+    // meaning a person or piece of equipment is assigned to two different crews.
+    // Names repeated within the same crew (e.g. crew lead name in assignment formats) are ignored.
+    var nameCrewMap = {};
+    combined.forEach(function(r) {
+      var name = (r['RESOURCE NAME OR EQUIPMENT ID'] || '').trim();
+      var crew = (r['CREW NUMBER'] || '').trim();
+      if (!name || !crew) return;
+      if (!nameCrewMap[name]) nameCrewMap[name] = [];
+      if (nameCrewMap[name].indexOf(crew) < 0) nameCrewMap[name].push(crew);
+    });
+    var dupes = Object.keys(nameCrewMap).filter(function(n) { return nameCrewMap[n].length > 1; });
+    if (dupes.length > 0) {
+      var warn = '⚠️ DUPLICATE ALERT: ' + dupes.length + ' resource(s) appear on multiple crews:\n';
+      dupes.forEach(function(n) {
+        warn += '  • ' + n + ' → ' + nameCrewMap[n].join(', ') + '\n';
+        processingLog.duplicates.push(n + ' appears on multiple crews: ' + nameCrewMap[n].join(', '));
+      });
+      addMsg('err', warn);
+      processingLog.warnings.push('DUPLICATE ALERT: ' + dupes.length + ' resource(s) assigned to multiple crews — see Duplicates section');
+    }
+
+          if (op === 'neither') {
+            return finalize({roster: rosterData.roster}, op);
+          }
+
+          // ── STEP 2: ARCOS ──
+          if (op === 'arcos' || op === 'both') {
+            setStatus('&#128260;','Step 2a: Building ARCOS Employees & Crews...');
+
+            // Split roster into per-crew batches so no single call gets too large
+            var crewBatches = {};
+            var crewBatchOrder = [];
+            rosterData.roster.forEach(function(r) {
+              var cn = r['CREW NUMBER'] || 'UNKNOWN';
+              if (!crewBatches[cn]) { crewBatches[cn] = []; crewBatchOrder.push(cn); }
+              crewBatches[cn].push(r);
+            });
+            // Group into chunks of ~3 crews per API call
+            var CREWS_PER_CALL = 3;
+            var arcosEmployees = [], arcosCrews = [];
+
+            function processArcosEmployeeBatch(batchIdx) {
+              var batchCrews = crewBatchOrder.slice(batchIdx * CREWS_PER_CALL, (batchIdx+1) * CREWS_PER_CALL);
+              if (batchCrews.length === 0) return Promise.resolve();
+              var batchRows = [];
+              batchCrews.forEach(function(cn) { batchRows = batchRows.concat(crewBatches[cn] || []); });
+              var batchSummary = JSON.stringify(batchRows);
+              var totalBatches = Math.ceil(crewBatchOrder.length / CREWS_PER_CALL);
+              setStatus('&#128260;', 'Step 2a: ARCOS Employees batch ' + (batchIdx+1) + '/' + totalBatches + '...');
+
+              var msg = 'Using this ROSTER data (crews ' + batchCrews.join(', ') + '), build ARCOS employee and crew rows.\n\nROSTER DATA:\n'+batchSummary+'\n\nINSTRUCTION: Return JSON with ONLY these keys: {"arcos_employees":[...],"arcos_crews":[...]}\nUse exact column keys. Location = city/state from roster LOCATION column.\nFor arcos_employees: RESOURCE rows only. "Resource Types" = ARCOS RESOURCE TYPES from CLASSIFICATIONS tab for this person\'s role. "Resource Types 2" = CLASSIFICATION value from CLASSIFICATIONS tab.\nFor arcos_crews: one row per resource (person AND equipment). Crew Name = crew number. Named Resource = person name or equipment ID. Resource Group = "Distribution Line". Resource Type: General Foreman->Distribution Line Resource Strike Team Leader, Foreman->Distribution Line Crew Leader, JL/Groundman/EO->Distribution Line Worker, Mechanic->Fleet Mechanic, Safety->Safety, Bucket->Material Handler - (4WD), Digger->Digger Derrick - (4WD), Pickup->Pick-up (4WD), Mech Truck->Fleet Mechanic Truck. Team Lead = "Yes" for General Foreman only. Crew Lead = "Yes" for Foreman only.';
+
+              return callAPI([{role:'user', content:msg}]).then(function(raw) {
+                var parsed = parseJSON(raw);
+                arcosEmployees = arcosEmployees.concat(parsed.arcos_employees || []);
+                arcosCrews = arcosCrews.concat(parsed.arcos_crews || []);
+                return processArcosEmployeeBatch(batchIdx + 1);
+              });
+            }
+
+            var arcosVehicles = [], arcosEquipment = [];
+
+            function processArcosVehicleBatch(batchIdx) {
+              var batchCrews = crewBatchOrder.slice(batchIdx * CREWS_PER_CALL, (batchIdx+1) * CREWS_PER_CALL);
+              if (batchCrews.length === 0) return Promise.resolve();
+              var batchRows = [];
+              batchCrews.forEach(function(cn) { batchRows = batchRows.concat(crewBatches[cn] || []); });
+              var batchSummary = JSON.stringify(batchRows);
+              var totalBatches = Math.ceil(crewBatchOrder.length / CREWS_PER_CALL);
+              setStatus('&#128260;', 'Step 2b: ARCOS Vehicles batch ' + (batchIdx+1) + '/' + totalBatches + '...');
+
+              var msg = 'Using this ROSTER data (crews ' + batchCrews.join(', ') + '), build ARCOS vehicle and equipment rows.\n\nROSTER DATA:\n'+batchSummary+'\n\nINSTRUCTION: Return JSON with ONLY these keys: {"arcos_vehicles":[...],"arcos_equipment":[...]}\nLocation = city/state from roster LOCATION column (strip any "PLATE:XXXX" prefix first).\nFor arcos_vehicles: ALL motorized/drivable equipment — this includes Pickups, Bucket Trucks, Material Handlers, Digger Derricks, Line Trucks, Mechanic Trucks, Dump Trucks, and ANY other self-propelled vehicle. Resource Name = equipment ID, Resource Type = vehicle type, CREW NUMBER, Location. LICENSE PLATE: if LOCATION contains "PLATE:XXXX", extract as License Plate; state abbreviation nearby → State/Province.\nFor arcos_equipment: ONLY non-motorized, non-drivable equipment — trailers, carts, back yard machines, flex track, and similar towed/stationary equipment. Resource Name = equipment ID, Resource Type, CREW NUMBER, Location.\nWhen in doubt, if it has an engine or is driven on the road → arcos_vehicles. If it is towed or stationary → arcos_equipment.';
+
+              return callAPI([{role:'user', content:msg}]).then(function(raw) {
+                var parsed = parseJSON(raw);
+                arcosVehicles = arcosVehicles.concat(parsed.arcos_vehicles || []);
+                arcosEquipment = arcosEquipment.concat(parsed.arcos_equipment || []);
+                return processArcosVehicleBatch(batchIdx + 1);
+              });
+            }
+
+            return processArcosEmployeeBatch(0)
+              .then(function() {
+                addMsg('system','ARCOS Employees: '+arcosEmployees.length+' | Crews: '+arcosCrews.length+' rows');
+                processingLog.steps.push('Step 2a complete: '+arcosEmployees.length+' ARCOS employees, '+arcosCrews.length+' ARCOS crew rows');
+                return processArcosVehicleBatch(0);
+              })
+              .then(function() {
+                addMsg('system','ARCOS Vehicles: '+arcosVehicles.length+' | Equipment: '+arcosEquipment.length);
+                processingLog.steps.push('Step 2b complete: '+arcosVehicles.length+' ARCOS vehicles, '+arcosEquipment.length+' ARCOS equipment rows');
+
+                var arcosData = {
+                  arcos_employees: arcosEmployees,
+                  arcos_crews: arcosCrews,
+                  arcos_vehicles: arcosVehicles,
+                  arcos_equipment: arcosEquipment
+                };
+
+                    if (op === 'arcos') {
+                      return finalize({
+                        roster: rosterData.roster,
+                        arcos_employees: arcosData.arcos_employees,
+                        arcos_vehicles: arcosData.arcos_vehicles,
+                        arcos_equipment: arcosData.arcos_equipment,
+                        arcos_crews: arcosData.arcos_crews
+                      }, op);
+                    }
+
+                    // ── STEP 3: STORM MANAGER ──
+                    setStatus('&#128260;','Step 3: Building Storm Manager tab...');
+                    var smRosterSummary = JSON.stringify(rosterData.roster);
+                    var smMsg = 'Using this completed ROSTER data, build the Storm Manager Roster.\n\nROSTER DATA:\n'+smRosterSummary+'\n\nINSTRUCTION: Return JSON with ONLY this key: {"storm_manager":[...]}\nPerson rows: fill Crew ID, name, classification, resource type, gender, lodging=Yes. Equipment rows: fill Crew ID + equipment cols only.\nResource Type: General Foreman->General Foreman, Foreman->Foreman, JL/Groundman/EO->Resource, Mechanic/Safety->Support\nEquipment Type: Bucket/Material Handler->Bucket, Digger->Digger, Pickup/Mechanic Truck->Pickup, others->Misc\nEquipment Sub Type: use the CLASSIFICATION value from the ROSTER for that equipment row (same value as the CLASSIFICATION column).\nLicense Plate: if the roster LOCATION field for that equipment contains "PLATE:XXXX", extract XXXX as the License Plate value. If a state appears alongside, use it for License State. Leave both empty if no plate data found — do NOT substitute the Equipment ID.';
+
+                    return callAPI([{role:'user', content:smMsg}])
+                      .then(function(smRaw){
+                        var smData = parseJSON(smRaw);
+                        addMsg('system','Storm Manager: '+(smData.storm_manager||[]).length+' rows built');
+                        processingLog.steps.push('Step 3 complete: '+(smData.storm_manager||[]).length+' Storm Manager rows built');
+                        return finalize({
+                          roster: rosterData.roster,
+                          arcos_employees: arcosData.arcos_employees,
+                          arcos_vehicles: arcosData.arcos_vehicles,
+                          arcos_equipment: arcosData.arcos_equipment,
+                          arcos_crews: arcosData.arcos_crews,
+                          storm_manager: smData.storm_manager
+                        }, op);
+                      });
+              });
+          }
+
+          // ── STORM MANAGER ONLY ──
+          if (op === 'storm') {
+            setStatus('&#128260;','Step 2: Building Storm Manager tab...');
+            var rosterSummary2 = JSON.stringify(rosterData.roster);
+            var smMsg2 = 'Using this completed ROSTER data, build the Storm Manager Roster.\n\nROSTER DATA:\n'+rosterSummary2+'\n\nINSTRUCTION: Return JSON with ONLY this key: {"storm_manager":[...]}\nPerson rows: fill Crew ID, name, classification, resource type, gender, lodging=Yes. Equipment rows: fill Crew ID + equipment cols only.\nResource Type: General Foreman->General Foreman, Foreman->Foreman, JL/Groundman/EO->Resource, Mechanic/Safety->Support\nEquipment Type: Bucket/Material Handler->Bucket, Digger->Digger, Pickup/Mechanic Truck->Pickup, others->Misc\nEquipment Sub Type: use the CLASSIFICATION value from the ROSTER for that equipment row (same value as the CLASSIFICATION column).\nLicense Plate: if the roster LOCATION field for that equipment contains "PLATE:XXXX", extract XXXX as the License Plate value. If a state appears alongside, use it for License State. Leave both empty if no plate data found — do NOT substitute the Equipment ID.';
+
+            return callAPI([{role:'user', content:smMsg2}])
+              .then(function(smRaw2){
+                var smData2 = parseJSON(smRaw2);
+                addMsg('system','Storm Manager: '+(smData2.storm_manager||[]).length+' rows built');
+                processingLog.steps.push('Step 2 complete (storm only): '+(smData2.storm_manager||[]).length+' Storm Manager rows built');
+                return finalize({
+                  roster: rosterData.roster,
+                  storm_manager: smData2.storm_manager
+                }, op);
+              });
+          }
+  } // end onAllChunksDone
+
+  // Kick off per-crew processing
+  addThinking();
+  processNextChunk(0)
+    .catch(function(e){
+      rmThinking();
+      addMsg('err','Error: '+e.message);
+      processingLog.errors.push('API/Processing error: '+e.message);
+      setStatus('&#10060;','Failed: '+e.message.substring(0,100));
+      updateProg(1);
+      busy=false; setBusy(false);
+    });
+}
+
+function finalize(data, op) {
+  rmThinking();
+  processingLog.info.push('Run completed: '+new Date().toLocaleString());
+
+  // Build processing summary — derive crew assignments and classification mappings from roster
+  var crewAssignments = [];
+  var crewMap = {}, crewLeads = {}, crewMembers = {}, crewEquipList = {};
+  (data.roster || []).forEach(function(r) {
+    var cn = r['CREW NUMBER'] || '';
+    if (!cn) return;
+    if (!crewMap[cn]) { crewMap[cn] = []; crewLeads[cn] = ''; crewMembers[cn] = []; crewEquipList[cn] = []; }
+    var name = r['RESOURCE NAME OR EQUIPMENT ID'] || '';
+    if (r['RESOURCE / EQUIPMENT'] === 'EQUIPMENT') {
+      var cls = r['CLASSIFICATION'] || '';
+      crewEquipList[cn].push(cls ? name + ' (' + cls + ')' : name);
+      return;
+    }
+    if (r['RESOURCE / EQUIPMENT'] !== 'RESOURCE') return;
+    if ((r['CREW LEAD'] || '').toString().toLowerCase() === 'yes' ||
+        (r['TEAM LEAD'] || '').toString().toLowerCase() === 'yes') {
+      crewLeads[cn] = name;
+    } else {
+      crewMembers[cn].push(name);
+    }
+  });
+  Object.keys(crewMap).forEach(function(cn) {
+    var isSupport = cn.toUpperCase().indexOf('SUPPORT') >= 0;
+    crewAssignments.push({
+      crew_number: cn,
+      crew_type: isSupport ? 'Support' : 'Line Crew',
+      lead: crewLeads[cn] || '',
+      members: crewMembers[cn].join(', '),
+      equipment: crewEquipList[cn].join(', '),
+      notes: ''
+    });
+  });
+
+  // Build classification mappings from all unique CLASSIFICATION values in roster
+  var clsMap = {};
+  (data.roster || []).forEach(function(r) {
+    var cls = (r['CLASSIFICATION'] || '').trim();
+    if (cls) clsMap[cls] = true;
+  });
+  var classificationMappings = Object.keys(clsMap).map(function(cls) {
+    return { original: cls, mapped: cls, confidence: 'High' };
+  });
+
+  data.processing_summary = {
+    contractors_processed: [{contractor: document.getElementById('qct').value.trim(), rows_added: (data.roster||[]).length, crews_added: countCrews(data.roster)}],
+    crew_assignments: crewAssignments,
+    classification_mappings: classificationMappings,
+    placeholder_ids: [],
+    items_needing_review: [],
+    assumptions_made: ['Processed in multiple API calls: ROSTER first, then additional tabs'],
+    _log: processingLog
+  };
+
+  var bytes;
+  try {
+    bytes = buildXlsx(data, op);
+    console.log('buildXlsx success, bytes:', bytes ? bytes.length : 'null');
+  } catch(e) {
+    console.error('buildXlsx error:', e);
+    addMsg('err', 'Error building workbook: ' + e.message);
+    busy=false; setBusy(false);
+    return;
+  }
+
+  var today = new Date();
+  var ds = pad(today.getMonth()+1)+'-'+pad(today.getDate())+'-'+today.getFullYear();
+  var co  = document.getElementById('qco').value.trim();
+  var ct  = document.getElementById('qct').value.trim();
+  var st  = document.getElementById('qst').value.trim();
+  var safePart = function(s){ return s.replace(/[\/\\:*?"<>|]/g,'').trim(); };
+  var parts = [safePart(co), safePart(ct)];
+  if (st) parts.push(safePart(st));
+  parts.push('Processed ' + ds);
+  var fn = parts.join(' - ') + '.xlsx';
+  document.getElementById('dlname').textContent = fn;
+  document.getElementById('btnDl').setAttribute('data-fn', fn);
+
+  var rc=(data.roster||[]).length, cc=countCrews(data.roster);
+  updateProg(5);
+  addMsg('system','Complete: '+rc+' rows | '+cc+' crews | workbook ready');
+
+  function showComplete(finalBytes) {
+    outBytes = finalBytes;
+    buildChips(data, op);
+    document.getElementById('dlbox').classList.add('show');
+    setStatus('&#9989;','Done! '+rc+' rows | '+cc+' crews. Download below.');
+    document.getElementById('cinput').disabled = false;
+    document.getElementById('sbtn').disabled   = false;
+    document.getElementById('sdot').className  = 'sdot act';
+    busy=false; setBusy(false);
+  }
+
+  var doTimesheets = document.getElementById('qts') && document.getElementById('qts').value === 'yes';
+  if (doTimesheets && bytes) {
+    setStatus('&#9203;','Building timesheets — please wait...');
+    addMsg('system','Building per-crew timesheets...');
+    // Ensure bytes is a proper ArrayBuffer (SheetJS may return a Uint8Array)
+    var bytesAB = bytes instanceof ArrayBuffer ? bytes : bytes.buffer || new Uint8Array(bytes).buffer;
+    buildTimesheetsRaw(bytesAB, data.roster || [], ct, function(tsBuf) {
+      addMsg('system','Timesheets complete. Workbook ready to download.');
+      showComplete(tsBuf);
+    });
+  } else {
+    showComplete(bytes);
+  }
+}
+
+// ── API CALL ──
+function callAPI(msgs) {
+  // Race the fetch against a 90-second timeout
+  var timeoutPromise = new Promise(function(_, reject) {
+    setTimeout(function() {
+      reject(new Error('API call timed out after 90s. The server may be busy — please try again.'));
+    }, 90000);
+  });
+
+  var fetchPromise = fetch('https://crew-roster-proxy.gregg-8ac.workers.dev', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model:'claude-sonnet-4-20250514',
+      max_tokens:16000,
+      system: SYSTEM_PROMPT,
+      messages: msgs
+    })
+  })
+  .then(function(resp){
+    if (!resp.ok) {
+      return resp.json().then(function(j){
+        throw new Error(j.error&&j.error.message ? j.error.message : 'HTTP '+resp.status);
+      }).catch(function(e){ throw e.message?e:new Error('HTTP '+resp.status); });
+    }
+    return resp.json();
+  })
+  .then(function(d){
+    if (!d.content||!d.content[0]||!d.content[0].text) throw new Error('Empty API response');
+    return d.content[0].text;
+  });
+
+  return Promise.race([fetchPromise, timeoutPromise]);
+}
+
+// ── API CALL WITH RETRY ──
+function callAPIWithRetry(msgs) {
+  return callAPI(msgs).catch(function(e) {
+    if (e.message && e.message.indexOf('timed out') >= 0) {
+      addMsg('system', '⚠️ Request timed out — retrying once...');
+      return callAPI(msgs); // one automatic retry
+    }
+    throw e;
+  });
+}
+function sendFollowUp() {
+  var inp = document.getElementById('cinput');
+  var txt = inp.value.trim();
+  if (!txt||busy) return;
+  inp.value=''; inp.style.height='auto';
+  busy=true; document.getElementById('sbtn').disabled=true;
+  addMsg('user',txt);
+  convHistory.push({role:'user', content:txt});
+  addThinking();
+  document.getElementById('sdot').className='sdot think';
+
+  callAPI(convHistory)
+    .then(function(raw){
+      rmThinking();
+      convHistory.push({role:'assistant', content:raw});
+      var isJson=false;
+      try {
+        var parsed=parseJSON(raw);
+        if (parsed.roster) {
+          var op=document.getElementById('qop').value;
+          outBytes=buildXlsx(parsed,op);
+          buildChips(parsed,op);
+          document.getElementById('dlbox').classList.add('show');
+          addMsg('assistant','Workbook updated. Download the latest version.');
+          isJson=true;
+        }
+      } catch(e){}
+      if (!isJson) addMsg('assistant',raw);
+      document.getElementById('sdot').className='sdot act';
+      document.getElementById('sbtn').disabled=false;
+      busy=false;
+    })
+    .catch(function(e){
+      rmThinking();
+      addMsg('err','Error: '+e.message);
+      document.getElementById('sdot').className='sdot act';
+      document.getElementById('sbtn').disabled=false;
+      busy=false;
+    });
+}
+
+document.getElementById('cinput').addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendFollowUp();}
+});
+document.getElementById('cinput').addEventListener('input',function(){
+  this.style.height='auto';
+  this.style.height=Math.min(this.scrollHeight,110)+'px';
+});
+
+// ── BUILD TIMESHEETS ──
+// Uses raw ZIP/XML manipulation so the template is duplicated byte-for-byte
+// with all formatting, merges, borders, and column widths perfectly preserved.
+// JSZip is loaded from cdnjs alongside SheetJS.
+function buildTimesheetsRaw(processedBytes, rosterRows, contractor, callback) {
+  if (!window.JSZip) {
+    addMsg('err', 'JSZip not loaded — timesheets skipped.');
+    callback(processedBytes); return;
+  }
+
+  var timedOut = false;
+  var timeoutId = setTimeout(function() {
+    timedOut = true;
+    addMsg('err', '⚠️ Timesheet generation timed out. Delivering workbook without timesheets.');
+    callback(processedBytes);
+  }, 25000);
+
+  // Strategy: work inside clientBuf (styles + shared strings are all correct there),
+  // copy the processed sheets (ROSTER, ARCOS, etc.) from processedBytes into it,
+  // then add per-crew TIMESHEET clones. This avoids any style/string index remapping.
+
+  Promise.all([
+    JSZip.loadAsync(new Uint8Array(clientBuf.slice ? clientBuf.slice(0) : clientBuf)),
+    JSZip.loadAsync(new Uint8Array(processedBytes))
+  ]).then(function(zips) {
+    var srcZip = zips[0]; // client workbook — correct styles + strings
+    var outZip = zips[1]; // SheetJS output — has processed roster sheets
+
+    function safeRead(zip, path) {
+      var f = zip.file(path);
+      if (f) return f.async('string');
+      var keys = Object.keys(zip.files), pl = path.toLowerCase();
+      for (var i = 0; i < keys.length; i++) {
+        if (keys[i].toLowerCase() === pl) return zip.files[keys[i]].async('string');
+      }
+      return Promise.resolve('');
+    }
+    function safeReadBin(zip, path) {
+      var f = zip.file(path);
+      if (f) return f.async('uint8array');
+      var keys = Object.keys(zip.files), pl = path.toLowerCase();
+      for (var i = 0; i < keys.length; i++) {
+        if (keys[i].toLowerCase() === pl) return zip.files[keys[i]].async('uint8array');
+      }
+      return Promise.resolve(null);
+    }
+
+    // Group roster by crew
+    var crewOrder = [], crewMap = {}, crewForeman = {};
+    rosterRows.forEach(function(r) {
+      var cn = r['CREW NUMBER'] || '';
+      if (!crewMap[cn]) { crewMap[cn] = []; crewOrder.push(cn); }
+      crewMap[cn].push(r);
+      if ((r['CREW LEAD'] || '').toString().toLowerCase() === 'yes') {
+        crewForeman[cn] = r['RESOURCE NAME OR EQUIPMENT ID'] || '';
+      }
+    });
+
+    // Read what we need from both ZIPs
+    Promise.all([
+      // From srcZip (client workbook): template sheet + its shared strings
+      safeRead(srcZip, 'xl/worksheets/sheet8.xml'),
+      safeRead(srcZip, 'xl/sharedStrings.xml'),
+      safeRead(srcZip, 'xl/workbook.xml'),
+      safeRead(srcZip, 'xl/_rels/workbook.xml.rels'),
+      safeRead(srcZip, '[Content_Types].xml'),
+      // From outZip (processed output): the sheets we need to copy in
+      safeRead(outZip, 'xl/workbook.xml'),
+      safeRead(outZip, 'xl/_rels/workbook.xml.rels'),
+      safeRead(outZip, 'xl/sharedStrings.xml')
+    ]).then(function(res) {
+      var templateXml  = res[0];
+      var srcSsXml     = res[1];
+      var srcWbXml     = res[2];
+      var srcWbRels    = res[3];
+      var srcCtXml     = res[4];
+      var outWbXml     = res[5];
+      var outWbRels    = res[6];
+      var outSsXml     = res[7];
+
+      if (!templateXml) {
+        clearTimeout(timeoutId);
+        addMsg('err', 'TIMESHEET template not found — timesheets skipped.');
+        callback(processedBytes); return;
+      }
+
+      // ── Parse source shared strings (template uses these indices) ──
+      var srcSsItems = [];
+      (srcSsXml.match(/<si>[\s\S]*?<\/si>/g) || []).forEach(function(si) {
+        var t = si.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+        srcSsItems.push(t ? t[1] : '');
+      });
+
+      // We'll ADD new strings onto the source table (safe — indices 0..N-1 stay valid)
+      var ssItems = srcSsItems.slice();
+
+      function addSharedString(val) {
+        var str = String(val);
+        for (var i = 0; i < ssItems.length; i++) {
+          if (ssItems[i] === str) return i;
+        }
+        ssItems.push(str);
+        return ssItems.length - 1;
+      }
+
+      // ── Find processed sheet files from outZip to copy into srcZip ──
+      // Get the list of sheets in the output workbook
+      var outSheets = [];
+      var outSheetRe = /<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*\/>/g;
+      var outSheetMatch;
+      while ((outSheetMatch = outSheetRe.exec(outWbXml)) !== null) {
+        outSheets.push({ name: outSheetMatch[1], rId: outSheetMatch[2] });
+      }
+
+      // Find their file targets in outWbRels
+      var sheetsToSkip = ['TIMESHEET']; // don't copy the blank TIMESHEET from output
+      var copyPromises = [];
+      outSheets.forEach(function(sheet) {
+        if (sheetsToSkip.indexOf(sheet.name) >= 0) return;
+        var relMatch = outWbRels.match(new RegExp('<Relationship[^>]*Id="' + sheet.rId + '"[^>]*Target="([^"]+)"'));
+        if (!relMatch) return;
+        var target = relMatch[1]; // e.g. "worksheets/sheet1.xml"
+        copyPromises.push({ sheet: sheet, target: target, path: 'xl/' + target });
+      });
+
+      // Also copy the output sharedStrings — we'll merge it with src strings
+      // Actually we use srcSsItems as base so template indices stay valid.
+      // We need to merge: add any strings from outSsXml that aren't already in ssItems
+      var outSsItems = [];
+      (outSsXml.match(/<si>[\s\S]*?<\/si>/g) || []).forEach(function(si) {
+        var t = si.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+        outSsItems.push(t ? t[1] : '');
+      });
+      // Build a remap: outSsItems index → ssItems index
+      var outSsRemap = {};
+      outSsItems.forEach(function(str, i) {
+        outSsRemap[i] = addSharedString(str);
+      });
+
+      // Read all the processed sheet XMLs
+      Promise.all(copyPromises.map(function(cp) { return safeRead(outZip, cp.path); }))
+      .then(function(sheetXmls) {
+
+        // ── Add next available sheet number in srcZip ──
+        var srcSheetNums = [];
+        Object.keys(srcZip.files).forEach(function(name) {
+          var m = name.match(/xl\/worksheets\/sheet(\d+)\.xml/);
+          if (m) srcSheetNums.push(parseInt(m[1]));
+        });
+        var nextNum = srcSheetNums.length > 0 ? Math.max.apply(null, srcSheetNums) + 1 : 9;
+
+        // Remove existing processed sheets from srcZip workbook registration
+        // (we keep the original sheet XML files but update workbook.xml + rels)
+        // Actually: start fresh — remove ALL sheets from srcWbXml/srcWbRels except TIMESHEET
+        // then add back the processed sheets + new TS- sheets
+
+        var newWbXml  = srcWbXml;
+        var newWbRels = srcWbRels;
+        var newCtXml  = srcCtXml;
+
+        // Strip all existing <sheet .../> entries — we'll rebuild
+        newWbXml = newWbXml.replace(/<sheets>[\s\S]*?<\/sheets>/, '<sheets></sheets>');
+
+        // Strip worksheet relationships — handle both relative and absolute Target paths
+        newWbRels = newWbRels.replace(/<Relationship[^>]*Target="(?:\/xl\/)?worksheets\/[^"]*"[^>]*\/>/g, '');
+
+        // Strip worksheet Content_Types — match on PartName="/xl/worksheets/..." specifically
+        newCtXml = newCtXml.replace(/<Override[^>]*PartName="\/xl\/worksheets\/[^"]*"[^>]*\/>/g, '');
+
+        // ── Copy processed sheets into srcZip and register them ──
+        var sheetNum = nextNum;
+        copyPromises.forEach(function(cp, i) {
+          var xml = sheetXmls[i];
+          if (!xml) return;
+
+          // Remap shared string indices in this sheet XML
+          xml = xml.replace(
+            /(<c [^>]*\bt="s"[^>]*>[\s\S]*?<v>)(\d+)(<\/v>)/g,
+            function(m, pre, idx, post) {
+              var mapped = outSsRemap[parseInt(idx)];
+              return pre + (mapped !== undefined ? mapped : idx) + post;
+            }
+          );
+
+          var fileName = 'xl/worksheets/sheet' + sheetNum + '.xml';
+          var rId = 'rId_proc_' + sheetNum;
+          var safeName = cp.sheet.name.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+          srcZip.file(fileName, xml);
+          newWbXml  = newWbXml.replace('</sheets>', '<sheet name="' + safeName + '" sheetId="' + (300 + sheetNum) + '" r:id="' + rId + '"/></sheets>');
+          newWbRels = newWbRels.replace('</Relationships>', '<Relationship Id="' + rId + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + sheetNum + '.xml"/></Relationships>');
+          newCtXml  = newCtXml.replace('</Types>', '<Override PartName="/xl/worksheets/sheet' + sheetNum + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+          sheetNum++;
+        });
+
+        // ── Build per-crew TIMESHEET clones — split if > 25 rows ──
+        var MAX_ROWS = 25;
+
+        crewOrder.forEach(function(crewNum) {
+          var rows = crewMap[crewNum] || [];
+          var rRows = rows.filter(function(r){ return r['RESOURCE / EQUIPMENT'] === 'RESOURCE'; });
+          var eRows = rows.filter(function(r){ return r['RESOURCE / EQUIPMENT'] === 'EQUIPMENT'; });
+          var allDataRows = rRows.concat(eRows);
+
+          // Split into batches of MAX_ROWS
+          var batches = [];
+          for (var bi = 0; bi < allDataRows.length; bi += MAX_ROWS) {
+            batches.push(allDataRows.slice(bi, bi + MAX_ROWS));
+          }
+          if (batches.length === 0) batches.push([]); // always create at least one sheet
+
+          batches.forEach(function(batch, batchIdx) {
+            var totalBatches = batches.length;
+            // Sheet name: TS-001, or TS-001-2, TS-001-3 for splits
+            var rawName = totalBatches === 1
+              ? 'TS-' + crewNum
+              : 'TS-' + crewNum + '-' + (batchIdx + 1);
+            var sheetName = rawName.substring(0, 31);
+            var fileName  = 'xl/worksheets/sheet' + sheetNum + '.xml';
+            var rId       = 'rId_ts_' + sheetNum;
+
+            var sheetXml = templateXml;
+
+            function setCell(ref, ssIdx) {
+              var rowNum = ref.replace(/^[A-Z]+/, '');
+              if (new RegExp('<c r="' + ref + '" s="\\d+"\\s*/>').test(sheetXml)) {
+                sheetXml = sheetXml.replace(new RegExp('<c r="' + ref + '" s="(\\d+)"\\s*/>'),
+                  '<c r="' + ref + '" s="$1" t="s"><v>' + ssIdx + '</v></c>');
+                return;
+              }
+              if (new RegExp('<c r="' + ref + '" s="\\d+"[^>]*><v>').test(sheetXml)) {
+                sheetXml = sheetXml.replace(new RegExp('<c r="' + ref + '" s="(\\d+)"(?:\\s+t="[^"]*")?><v>[^<]*</v></c>'),
+                  '<c r="' + ref + '" s="$1" t="s"><v>' + ssIdx + '</v></c>');
+                return;
+              }
+              sheetXml = sheetXml.replace(new RegExp('(<row[^>]* r="' + rowNum + '"[^>]*>[\\s\\S]*?)(</row>)'),
+                '$1<c r="' + ref + '" s="0" t="s"><v>' + ssIdx + '</v></c>$2');
+            }
+
+            // Header cells — show batch number in crew ID if split
+            var crewLabel = totalBatches === 1 ? crewNum : crewNum + ' (' + (batchIdx+1) + '/' + totalBatches + ')';
+            setCell('B6',  addSharedString(contractor));
+            setCell('X7',  addSharedString(crewLabel));
+            setCell('B11', addSharedString(crewLabel));
+            setCell('M6',  addSharedString(crewForeman[crewNum] || ''));
+
+            // Data rows
+            batch.forEach(function(r, i) {
+              var rn = 16 + i;
+              setCell('A' + rn, addSharedString(r['RESOURCE NAME OR EQUIPMENT ID'] || ''));
+              setCell('B' + rn, addSharedString(r['CLASSIFICATION'] || ''));
+            });
+
+            srcZip.file(fileName, sheetXml);
+            var safeName = sheetName.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+            newWbXml  = newWbXml.replace('</sheets>', '<sheet name="' + safeName + '" sheetId="' + (400 + sheetNum) + '" r:id="' + rId + '"/></sheets>');
+            newWbRels = newWbRels.replace('</Relationships>', '<Relationship Id="' + rId + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + sheetNum + '.xml"/></Relationships>');
+            newCtXml  = newCtXml.replace('</Types>', '<Override PartName="/xl/worksheets/sheet' + sheetNum + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>');
+            sheetNum++;
+          });
+        });
+
+        // ── Rebuild shared strings in srcZip ──
+        var newSs = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="' + ssItems.length + '" uniqueCount="' + ssItems.length + '">';
+        ssItems.forEach(function(s) {
+          newSs += '<si><t>' + s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</t></si>';
+        });
+        newSs += '</sst>';
+
+        // Remove calcChain before writing — must happen before srcZip.file() calls
+        srcZip.remove('xl/calcChain.xml');
+        newCtXml  = newCtXml.replace(/<Override[^>]*calcChain[^>]*\/>/g, '');
+        newWbRels = newWbRels.replace(/<Relationship[^>]*calcChain[^>]*\/>/g, '');
+
+        // Remove original unregistered sheet files (sheets 1-8 from clientBuf)
+        // They are orphans — replaced by the processed copies at sheet9+ — and
+        // confuse Excel's repair validator when left in the ZIP unregistered.
+        for (var orig = 1; orig <= 8; orig++) {
+          srcZip.remove('xl/worksheets/sheet' + orig + '.xml');
+        }
+
+        srcZip.file('xl/workbook.xml', newWbXml);
+        srcZip.file('xl/_rels/workbook.xml.rels', newWbRels);
+        srcZip.file('[Content_Types].xml', newCtXml);
+        srcZip.file('xl/sharedStrings.xml', newSs);
+
+        srcZip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' }).then(function(buf) {
+          if (!timedOut) { clearTimeout(timeoutId); callback(buf); }
+        });
+      }).catch(function(e) {
+        if (!timedOut) { clearTimeout(timeoutId); addMsg('err','Timesheet sheet copy error: '+e.message); callback(processedBytes); }
+      });
+    }).catch(function(e) {
+      if (!timedOut) { clearTimeout(timeoutId); addMsg('err','Timesheet read error: '+e.message); callback(processedBytes); }
+    });
+  }).catch(function(e) {
+    if (!timedOut) { clearTimeout(timeoutId); addMsg('err','Timesheet ZIP error: '+e.message); callback(processedBytes); }
+  });
+}
+
+// ── BUILD XLSX ──
+function buildXlsx(data, op) {
+  var wb;
+  try { wb=XLSX.read(clientBuf,{type:'array', cellStyles:true, sheetStubs:true}); }
+  catch(e){ wb=XLSX.utils.book_new(); }
+
+  function writeSheet(name, headers, rows) {
+    var aoa=[headers];
+    (rows||[]).forEach(function(r){
+      aoa.push(headers.map(function(h){ return (r[h]!==undefined&&r[h]!==null)?r[h]:''; }));
+    });
+    var sheet=XLSX.utils.aoa_to_sheet(aoa);
+    sheet['!cols']=headers.map(function(h){ return {wch:Math.max(h.length+2,16)}; });
+    var idx=wb.SheetNames.indexOf(name);
+    if(idx>=0) wb.Sheets[name]=sheet;
+    else XLSX.utils.book_append_sheet(wb,sheet,name);
+  }
+
+  // ROSTER — always
+  writeSheet('ROSTER',
+    ['COMPANY','CONTRACTOR','UNION / NON UNION','STORM NAME','CREW NUMBER',
+     'RESOURCE NAME OR EQUIPMENT ID','CLASSIFICATION','RESOURCE / EQUIPMENT',
+     'LODGING REQUIRED','LODGING SIZE','PHONE NUMBER','EMAIL ADDRESS',
+     'GENDER','LOCATION','TEAM LEAD','CREW LEAD'],
+    data.roster);
+
+  // ARCOS tabs
+  if (op==='arcos'||op==='both') {
+    writeSheet('ARCOS Employees',
+      ['First Name','Last Name','e-Mail','Share e-Mail','Phone','Share Phone',
+       'ID','CREW NUMBER','Location','Gender','Team Lead','Crew Lead',
+       'Resource Types','Resource Types 2','Resource Types 3','Status'],
+      data.arcos_employees);
+    writeSheet('ARCOS Vehicles',
+      ['Resource Name','Resource Type','License Plate','State/Province','CREW NUMBER','Location'],
+      data.arcos_vehicles);
+    writeSheet('ARCOS Equipment',
+      ['Resource Name','Resource Type','CREW NUMBER','Location'],
+      data.arcos_equipment);
+    writeSheet('ARCOS Crews',
+      ['Crew Name','Location','Resource Group','Resource Type','Named Resource','Team Lead','Crew Lead'],
+      data.arcos_crews);
+  }
+
+  // Storm Manager
+  if (op==='storm'||op==='both') {
+    writeSheet('STORM MANAGER ROSTER',
+      ['Crew ID','First Name','Last Name','Classification','Resource Type',
+       'Gender','Crew Request Lodging','Equipment ID','License Plate',
+       'License State','Equipment Type','Equipment Sub Type'],
+      data.storm_manager);
+  }
+
+  // Timesheets are handled separately via buildTimesheetsRaw after XLSX is generated
+
+  // Processing Summary
+  var ps=data.processing_summary||{};
+  var log=ps._log||{errors:[],warnings:[],duplicates:[],steps:[],info:[]};
+  var sumRows=[];
+
+  // ── RUN INFO ──
+  sumRows.push(['RUN INFORMATION']);
+  (log.info||[]).forEach(function(s){ sumRows.push([s]); });
+  sumRows.push(['']);
+
+  // ── ERRORS ──
+  sumRows.push(['ERRORS']);
+  if ((log.errors||[]).length === 0) {
+    sumRows.push(['(none)']);
+  } else {
+    (log.errors||[]).forEach(function(e){ sumRows.push(['❌  '+e]); });
+  }
+  sumRows.push(['']);
+
+  // ── WARNINGS ──
+  sumRows.push(['WARNINGS']);
+  if ((log.warnings||[]).length === 0) {
+    sumRows.push(['(none)']);
+  } else {
+    (log.warnings||[]).forEach(function(w){ sumRows.push(['⚠️  '+w]); });
+  }
+  sumRows.push(['']);
+
+  // ── DUPLICATES ──
+  sumRows.push(['DUPLICATE RESOURCES']);
+  if ((log.duplicates||[]).length === 0) {
+    sumRows.push(['(none detected)']);
+  } else {
+    sumRows.push(['Resource','Appears On']);
+    (log.duplicates||[]).forEach(function(d){
+      var parts = d.split(' appears on crews: ');
+      sumRows.push([parts[0]||d, parts[1]||'']);
+    });
+  }
+  sumRows.push(['']);
+
+  // ── PROCESSING STEPS ──
+  sumRows.push(['PROCESSING STEPS']);
+  (log.steps||[]).forEach(function(s){ sumRows.push(['✓  '+s]); });
+  sumRows.push(['']);
+
+  // ── CONTRACTORS PROCESSED ──
+  var totalResources = (data.roster||[]).filter(function(r){ return r['RESOURCE / EQUIPMENT'] === 'RESOURCE'; }).length;
+  var totalEquipment = (data.roster||[]).filter(function(r){ return r['RESOURCE / EQUIPMENT'] === 'EQUIPMENT'; }).length;
+
+  sumRows.push(['CONTRACTORS PROCESSED']);
+  sumRows.push(['Contractor','Rows Added','Crews Added','Total Personnel (Resources)','Total Equipment / Vehicles']);
+  (ps.contractors_processed||[]).forEach(function(r){ sumRows.push([r.contractor||'',r.rows_added||'',r.crews_added||'',totalResources,totalEquipment]); });
+  sumRows.push(['']);
+
+  sumRows.push(['CREW NUMBER ASSIGNMENTS']);
+  sumRows.push(['Crew Number','Crew Type','Lead','Members','Equipment / Vehicles','Personnel Count','Equipment Count']);
+  (ps.crew_assignments||[]).forEach(function(r){
+    var crewNum = r.crew_number || '';
+    var crewResources = (data.roster||[]).filter(function(row){ return row['CREW NUMBER'] === crewNum && row['RESOURCE / EQUIPMENT'] === 'RESOURCE'; }).length;
+    var crewEquip     = (data.roster||[]).filter(function(row){ return row['CREW NUMBER'] === crewNum && row['RESOURCE / EQUIPMENT'] === 'EQUIPMENT'; }).length;
+    sumRows.push([crewNum, r.crew_type||'', r.lead||'', r.members||'', r.equipment||'', crewResources, crewEquip]);
+  });
+  sumRows.push(['','','','','','Total: '+totalResources,'Total: '+totalEquipment]);
+  sumRows.push(['']);
+  sumRows.push(['CLASSIFICATION MAPPINGS']);
+  sumRows.push(['Original','Mapped','Confidence']);
+  (ps.classification_mappings||[]).forEach(function(r){ sumRows.push([r.original||'',r.mapped||'',r.confidence||'']); });
+  sumRows.push(['']);
+  sumRows.push(['ITEMS NEEDING REVIEW']);
+  sumRows.push(['Field','Value','Reason']);
+  (ps.items_needing_review||[]).forEach(function(r){ sumRows.push([r.field||'',r.value||'',r.reason||'']); });
+  sumRows.push(['']);
+  sumRows.push(['ASSUMPTIONS MADE']);
+  sumRows.push(['Description']);
+  (ps.assumptions_made||[]).forEach(function(r){ sumRows.push([typeof r==='string'?r:(r.description||'')]); });
+
+  var sumSheet=XLSX.utils.aoa_to_sheet(sumRows);
+  sumSheet['!cols']=[{wch:40},{wch:35},{wch:22},{wch:15},{wch:50}];
+  var si=wb.SheetNames.indexOf('PROCESSING SUMMARY');
+  if(si>=0) wb.Sheets['PROCESSING SUMMARY']=sumSheet;
+  else XLSX.utils.book_append_sheet(wb,sumSheet,'PROCESSING SUMMARY');
+
+  // Sheet order — TS- timesheet tabs sort after PROCESSING SUMMARY
+  var order=['ROSTER','CLASSIFICATIONS','ARCOS Employees','ARCOS Vehicles','ARCOS Equipment','ARCOS Crews','STORM MANAGER ROSTER','PROCESSING SUMMARY'];
+  wb.SheetNames.sort(function(a,b){
+    var isA_ts = a.indexOf('TS-') === 0, isB_ts = b.indexOf('TS-') === 0;
+    if (isA_ts && isB_ts) return 0; // preserve TS- tab order
+    if (isA_ts) return 1;  // TS- tabs go after all named tabs
+    if (isB_ts) return -1;
+    var ai=order.indexOf(a),bi=order.indexOf(b);
+    if(ai<0&&bi<0)return 0; if(ai<0)return 1; if(bi<0)return -1; return ai-bi;
+  });
+
+  return XLSX.write(wb,{bookType:'xlsx',type:'array'});
+}
+
+// ── DOWNLOAD ──
+function doDownload() {
+  console.log('doDownload called, outBytes:', outBytes ? outBytes.length + ' bytes' : 'NULL');
+  if (!outBytes) { alert('No data to download. Please process a roster first.'); return; }
+  try {
+    var fn=document.getElementById('btnDl').getAttribute('data-fn')||'processed_roster.xlsx';
+    var blob=new Blob([outBytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=fn; a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); },1000);
+  } catch(e) { console.error('Download error:', e); alert('Download error: ' + e.message); }
+}
+
+// ── PARSE JSON ──
+function parseJSON(raw) {
+  var text = raw.trim();
+  // Strip all markdown fences aggressively
+  text = text.replace(/^```json\s*/im, '').replace(/^```\s*/im, '').replace(/```\s*$/m, '').trim();
+  // Try direct parse first
+  try { return JSON.parse(text); } catch(e) {}
+  // Find outermost { }
+  var s = text.indexOf('{'), end = text.lastIndexOf('}');
+  if (s >= 0 && end > s) {
+    try { return JSON.parse(text.substring(s, end+1)); } catch(e2) {}
+  }
+  // Try finding any valid JSON object in the text
+  var match = text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try { return JSON.parse(match[0]); } catch(e3) {}
+  }
+  throw new Error('Could not parse JSON. First 200 chars: ' + raw.substring(0, 200));
+}
+
+// ── UI HELPERS ──
+function addMsg(role,text){
+  var c=document.getElementById('msgs');
+  var lbl={assistant:'AI',user:'YOU',system:'SYS',err:'ERR'}[role]||'AI';
+  var meta={assistant:'Claude',user:'User',system:'System',err:'Error'}[role]||role;
+  var d=document.createElement('div'); d.className='msg '+role;
+  d.innerHTML='<div class="mav">'+lbl+'</div><div class="mc"><div class="mmeta">'+meta+'</div><div class="mb">'+esc(text)+'</div></div>';
+  c.appendChild(d); c.scrollTop=c.scrollHeight;
+  document.getElementById('msgct').textContent=c.querySelectorAll('.msg').length+' msgs';
+}
+function addThinking(){
+  var c=document.getElementById('msgs');
+  var d=document.createElement('div'); d.id='thmsg'; d.className='msg assistant';
+  d.innerHTML='<div class="mav">AI</div><div class="mc"><div class="mmeta">Claude</div><div class="mb thinking">Analyzing roster data and building workbook...</div></div>';
+  c.appendChild(d); c.scrollTop=c.scrollHeight;
+}
+function rmThinking(){ var el=document.getElementById('thmsg'); if(el) el.remove(); }
+function clearConv(){ document.getElementById('msgs').innerHTML=''; convHistory=[]; document.getElementById('msgct').textContent='0 msgs'; addMsg('system','Conversation cleared.'); }
+function setStatus(ico,txt){ document.getElementById('sico').innerHTML=ico; document.getElementById('stxt').textContent=txt; }
+function setBusy(b){
+  var btn=document.getElementById('btnProc'), note=document.getElementById('procNote');
+  if(b){ btn.disabled=true; btn.innerHTML='<span class="spin"></span>&nbsp;Processing...'; note.classList.add('show'); }
+  else { btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg> Process Roster'; note.classList.remove('show'); checkReady(); }
+}
+function updateProg(n){ for(var i=1;i<=5;i++){ document.getElementById('p'+i).className='ps'+(i<n?' done':i===n?' act':''); } }
+function countCrews(rows){ if(!rows)return 0; var s={}; rows.forEach(function(r){ if(r['CREW NUMBER'])s[r['CREW NUMBER']]=1; }); return Object.keys(s).length; }
+function buildChips(data,op){
+  var c=document.getElementById('chips'); c.innerHTML='';
+  var r=data.roster||[];
+  function chip(lbl,cls){ var d=document.createElement('div'); d.className='chip'+(cls?' '+cls:''); d.textContent=lbl; c.appendChild(d); }
+  chip(countCrews(r)+' Crews','d');
+  chip(r.filter(function(x){return x['RESOURCE / EQUIPMENT']==='RESOURCE';}).length+' Personnel','d');
+  chip(r.filter(function(x){return x['RESOURCE / EQUIPMENT']==='EQUIPMENT';}).length+' Equipment','a');
+  if(op==='arcos'||op==='both') {
+    chip('ARCOS','d');
+    if(data.arcos_crews) chip((data.arcos_crews||[]).length+' Crews','a');
+  }
+  if(op==='storm'||op==='both') chip('Storm Mgr','d');
+  var flags=((data.processing_summary&&data.processing_summary.items_needing_review)||[]).length;
+  if(flags) chip(flags+' Flags','');
+}
+function pad(n){ return n<10?'0'+n:''+n; }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  // Expose functions needed by onclick handlers
+  window.doDownload = doDownload;
+  window.clearConv = clearConv;
+  window.sendFollowUp = sendFollowUp;
+})();
+</script>
+</body>
+</html>
