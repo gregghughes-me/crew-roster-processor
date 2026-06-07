@@ -3629,17 +3629,49 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
             .replace(/<drawing r:id="[^"]*"\/>/g, '')
             .replace(/<legacyDrawing[^>]*\/>/g, '');
 
-          // Convert shared-string cells (<c .. t="s"><v>N</v></c>) to inline strings
-          infoSheetXml = infoSheetXml.replace(/<c ([^>]*?t="s"[^>]*)><v>(\d+)<\/v><\/c>/g, function(m, attrs, idxStr) {
-            var idx = parseInt(idxStr, 10);
-            var val = (idx < sst.length) ? sst[idx] : '';
-            var attrs2 = attrs.replace(/\s*t="s"/, '');
-            return '<c ' + attrs2 + ' t="inlineStr"><is><t xml:space="preserve">' + val + '</t></is></c>';
-          });
+          // Convert EVERY shared-string cell to an inline string, regardless of
+          // attribute order, whitespace, or whether the cell is empty/self-closing.
+          // Any t="s" cell left behind would point at an index in a shared-string
+          // table the output file does not contain -> Excel "removed cell information".
+          infoSheetXml = infoSheetXml.replace(
+            /<c\b([^>]*?)\bt="s"([^>]*?)(\/>|>([\s\S]*?)<\/c>)/g,
+            function(m, pre, post, tail, body) {
+              // Recover the shared-string index from <v>N</v> if present.
+              var val = '';
+              if (body) {
+                var vm = body.match(/<v[^>]*>\s*(\d+)\s*<\/v>/);
+                if (vm) {
+                  var idx = parseInt(vm[1], 10);
+                  val = (idx >= 0 && idx < sst.length) ? sst[idx] : '';
+                }
+              }
+              // Keep all original attributes EXCEPT the t="s" type we are replacing.
+              var attrs = (pre + post).replace(/\s+/g, ' ').trim();
+              attrs = attrs ? ' ' + attrs : '';
+              return '<c' + attrs + ' t="inlineStr"><is><t xml:space="preserve">' +
+                xmlEsc(val) + '</t></is></c>';
+            }
+          );
+          // Safety net: neutralize any stray t="s" that slipped through, so no
+          // dangling shared-string reference can ever reach the output sheet.
+          infoSheetXml = infoSheetXml.replace(/(<c\b[^>]*?)\bt="s"([^>]*\/>)/g, '$1$2');
+          infoSheetXml = infoSheetXml.replace(
+            /(<c\b[^>]*?)\bt="s"([^>]*>)([\s\S]*?)<\/c>/g,
+            function(m, head, rest, body) {
+              var vm = body.match(/<v[^>]*>\s*(\d+)\s*<\/v>/);
+              var val = '';
+              if (vm) { var i = parseInt(vm[1],10); val = (i>=0 && i<sst.length) ? sst[i] : ''; }
+              return head + rest.replace(/\/?>$/, '>') +
+                '<is><t xml:space="preserve">' + xmlEsc(val) + '</t></is></c>';
+            }
+          );
 
-          // Offset all style refs s="N" by xfOff
-          infoSheetXml = infoSheetXml.replace(/s="(\d+)"/g, function(m, n) {
-            return 's="' + (parseInt(n,10) + xfOff) + '"';
+          // Offset cell style refs s="N" by xfOff — ONLY within <c ...> tags,
+          // never inside inline-string text content.
+          infoSheetXml = infoSheetXml.replace(/<c\b[^>]*>/g, function(tag) {
+            return tag.replace(/(\ss=")(\d+)(")/g, function(mm, a, n, b) {
+              return a + (parseInt(n, 10) + xfOff) + b;
+            });
           });
 
           // Number new sheets
