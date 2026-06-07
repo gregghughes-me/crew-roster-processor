@@ -3496,6 +3496,133 @@ function base64ToUint8Array(b64str) {
   return bytes;
 }
 
+// Clone the user's already-correct "EXAMPLE FE TIMESHEET" tab once per crew.
+// The tab lives in the SAME workbook we are writing to, so its style indices
+// and shared-string references are already valid in the output — we just clear
+// the example data cells and fill the real crew. No style merge / font bump /
+// view fix / shared-string conversion / vm-cm / r:id stripping needed.
+function buildFromExampleTab(outZip, examplePath, outWbXml, outRelsXml, outCtXml,
+                             crewOrder, crewMap, contractor, xmlEsc, finishOK, fallback) {
+  return outZip.file(examplePath).async('string').then(function(exampleXml) {
+    if (!exampleXml) { fallback('example tab XML empty'); return; }
+    var COMPANY = contractor || '';
+
+    // The data-entry coordinates, confirmed from the example tab itself:
+    //   people    rows 13-20: A=Crew No, D=Last, G=First, H=Emp#, M=Company, T=Class
+    //   equipment rows 23-33: A=Crew No, D=Equip#, H=Equip Type
+    //   C6 = Company name
+    var PEOPLE_ROWS = [13,14,15,16,17,18,19,20];
+    var EQUIP_ROWS  = [23,24,25,26,27,28,29,30,31,32,33];
+    function dataCellList() {
+      var refs = ['C6'];
+      PEOPLE_ROWS.forEach(function(r){ ['A','D','G','H','M','T'].forEach(function(c){ refs.push(c+r); }); });
+      EQUIP_ROWS.forEach(function(r){ ['A','D','H'].forEach(function(c){ refs.push(c+r); }); });
+      return refs;
+    }
+    var DATA_CELLS = dataCellList();
+
+    // Rewrite one cell IN PLACE: keep its existing style index (s="N"), drop any
+    // t="s"/<v> shared-string body, and write the value as an inline string.
+    // An empty value yields a styled-but-blank cell (clears the example data).
+    function writeCell(xml, coord, value) {
+      function build(styleAttr) {
+        var v = (value == null) ? '' : String(value);
+        var body = v === '' ? '' : '<is><t xml:space="preserve">' + xmlEsc(v) + '</t></is>';
+        var t = v === '' ? '' : ' t="inlineStr"';
+        return '<c r="' + coord + '"' + styleAttr + t + '>' + body + '</c>';
+      }
+      // self-closing existing cell: <c r="A13" s="21"/>
+      var sc = new RegExp('<c r="' + coord + '"((?:\\s+[a-zA-Z:]+="[^"]*")*?)\\s*/>');
+      var m = xml.match(sc);
+      if (m) { return xml.replace(sc, build((m[1].match(/\s+s="\d+"/) || [''])[0])); }
+      // full existing cell: <c r="A13" s="21" t="s"><v>..</v></c>
+      var full = new RegExp('<c r="' + coord + '"((?:\\s+[a-zA-Z:]+="[^"]*")*?)\\s*>[\\s\\S]*?</c>');
+      m = xml.match(full);
+      if (m) { return xml.replace(full, build((m[1].match(/\s+s="\d+"/) || [''])[0])); }
+      return xml; // cell absent (shouldn't happen for the example tab) — leave as-is
+    }
+
+    // Sheet-name sanitizer + de-dup (same rules as the template path).
+    var usedNames = {};
+    (outWbXml.match(/<sheet\b[^>]*\bname="([^"]*)"/g) || []).forEach(function(s) {
+      usedNames[((s.match(/name="([^"]*)"/) || [,''])[1]).toLowerCase()] = true;
+    });
+    function makeSheetName(raw) {
+      var base = String(raw == null ? '' : raw)
+        .replace(/[:\\\/?*\[\]]/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 31);
+      if (!base) base = 'Crew';
+      var candidate = base, i = 2;
+      while (usedNames[candidate.toLowerCase()]) {
+        var suffix = ' (' + i + ')';
+        candidate = base.substring(0, 31 - suffix.length) + suffix; i++;
+      }
+      usedNames[candidate.toLowerCase()] = true;
+      return candidate;
+    }
+
+    // Next free sheetN.xml number.
+    var outSheetNums = [];
+    Object.keys(outZip.files).forEach(function(name) {
+      var mm = name.match(/xl\/worksheets\/sheet(\d+)\.xml/);
+      if (mm) outSheetNums.push(parseInt(mm[1], 10));
+    });
+    var nextNum = outSheetNums.length ? Math.max.apply(null, outSheetNums) + 1 : 1;
+    var newCtEntries = '';
+
+    crewOrder.forEach(function(crewNum) {
+      var data = crewMap[crewNum];
+      var xml = exampleXml;
+      // 1) Clear ALL example data cells (keep their styling).
+      DATA_CELLS.forEach(function(ref) { xml = writeCell(xml, ref, ''); });
+      // 2) Fill the real crew.
+      xml = writeCell(xml, 'C6', COMPANY);
+      PEOPLE_ROWS.forEach(function(rn, idx) {
+        if (idx >= data.people.length) return;
+        var p = data.people[idx];
+        var nameParts = (p['RESOURCE NAME OR EQUIPMENT ID'] || '').trim().split(' ');
+        var first = nameParts[0] || '', last = nameParts.slice(1).join(' ') || '';
+        xml = writeCell(xml, 'A' + rn, crewNum);
+        xml = writeCell(xml, 'D' + rn, last);
+        xml = writeCell(xml, 'G' + rn, first);
+        xml = writeCell(xml, 'M' + rn, COMPANY);
+        xml = writeCell(xml, 'T' + rn, p['CLASSIFICATION'] || '');
+      });
+      EQUIP_ROWS.forEach(function(rn, idx) {
+        if (idx >= data.equipment.length) return;
+        var eq = data.equipment[idx];
+        xml = writeCell(xml, 'A' + rn, crewNum);
+        xml = writeCell(xml, 'D' + rn, eq['RESOURCE NAME OR EQUIPMENT ID'] || '');
+        xml = writeCell(xml, 'H' + rn, eq['CLASSIFICATION'] || '');
+      });
+
+      var fileName = 'xl/worksheets/sheet' + nextNum + '.xml';
+      var rId = 'rIdFE' + nextNum;
+      var safeName = xmlEsc(makeSheetName(crewNum)).replace(/"/g, '&quot;');
+      outZip.file(fileName, xml);
+      outWbXml = outWbXml.replace('</sheets>',
+        '<sheet name="' + safeName + '" sheetId="' + (500 + nextNum) + '" r:id="' + rId + '"/></sheets>');
+      outRelsXml = outRelsXml.replace('</Relationships>',
+        '<Relationship Id="' + rId + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + nextNum + '.xml"/></Relationships>');
+      newCtEntries += '<Override PartName="/xl/worksheets/sheet' + nextNum + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+      nextNum++;
+    });
+
+    if (outWbXml.indexOf('xmlns:r=') < 0) {
+      outWbXml = outWbXml.replace('<workbook ', '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
+    }
+    outZip.file('xl/workbook.xml', outWbXml);
+    outZip.file('xl/_rels/workbook.xml.rels', outRelsXml);
+    outCtXml = outCtXml.replace('</Types>', newCtEntries + '</Types>');
+    outZip.file('[Content_Types].xml', outCtXml);
+
+    console.log('FE(example): built ' + crewOrder.length + ' crew tabs by cloning EXAMPLE FE TIMESHEET');
+    return outZip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' }).then(function(finalBytes) {
+      addMsg('system', 'FE Timesheets built: ' + crewOrder.length + ' crew tab(s) added (cloned from EXAMPLE FE TIMESHEET)');
+      finishOK(finalBytes);
+    });
+  }).catch(function(e) { fallback(e && e.message ? e.message : String(e)); });
+}
+
 function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
   var done = false;
   function finishOK(bytes) { if (done) return; done = true; callback(bytes); }
@@ -3565,6 +3692,43 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
           fallback('missing workbook part'); return;
         }
 
+        // ============================================================
+        // PREFERRED PATH: clone the user's "EXAMPLE FE TIMESHEET" tab.
+        // If the uploaded roster workbook contains a tab literally named
+        // "EXAMPLE FE TIMESHEET", it is already a pixel-perfect, clean FE
+        // timesheet (normal view, no drawings/hyperlinks/relationships, no
+        // dynamic-array metadata, 18pt Arial data font, full mergeCells,
+        // totals as SUM(Y:AG)). Because it lives in THIS workbook, its style
+        // indices and shared-string references are already valid in the output.
+        // So we can clone it verbatim per crew, clear the example data cells,
+        // and fill only the real crew — with NO style merge, NO font bump, NO
+        // view normalization, NO shared-string conversion, NO vm/cm or r:id
+        // stripping. That avoids every class of corruption the transform path
+        // had to defend against. Falls back to the embedded template below if
+        // the tab is absent.
+        var exampleRid = null;
+        (outWbXml.match(/<sheet\b[^>]*>/g) || []).forEach(function(tag) {
+          var nm = (tag.match(/\bname="([^"]*)"/) || [,''])[1];
+          if (nm.trim().toUpperCase() === 'EXAMPLE FE TIMESHEET') {
+            exampleRid = (tag.match(/r:id="([^"]*)"/) || tag.match(/r:Id="([^"]*)"/) || [,null])[1];
+          }
+        });
+        if (exampleRid) {
+          var outRelMap = {};
+          (outRelsXml.match(/<Relationship\b[^>]*>/g) || []).forEach(function(rel) {
+            var id = (rel.match(/\bId="([^"]*)"/) || [,''])[1];
+            var tgt = (rel.match(/\bTarget="([^"]*)"/) || [,''])[1];
+            outRelMap[id] = tgt.indexOf('/') === 0 ? tgt.substring(1) : 'xl/' + tgt;
+          });
+          var examplePath = outRelMap[exampleRid];
+          console.log('FE: EXAMPLE FE TIMESHEET found, rid=' + exampleRid + ' path=' + examplePath);
+          if (examplePath && outZip.file(examplePath)) {
+            return buildFromExampleTab(outZip, examplePath, outWbXml, outRelsXml, outCtXml,
+              crewOrder, crewMap, contractor, xmlEsc, finishOK, fallback);
+          }
+          console.log('FE: example tab path missing, falling back to embedded template');
+        }
+
         // Parse template shared strings
         var sst = [];
         if (tplSstXml) {
@@ -3601,6 +3765,53 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
         merged = merged.replace(/<fills(?:\s[^>]*)?>[\s\S]*?<\/fills>/, '<fills count="' + countOf(nfi,'fill') + '">' + nfi + '</fills>');
         merged = merged.replace(/<borders(?:\s[^>]*)?>[\s\S]*?<\/borders>/, '<borders count="' + countOf(nb,'border') + '">' + nb + '</borders>');
         merged = merged.replace(/<cellXfs(?:\s[^>]*)?>[\s\S]*?<\/cellXfs>/, '<cellXfs count="' + countOf(nx,'xf') + '">' + nx + '</cellXfs>');
+
+        // === Data-cell font enlargement ===
+        // The FE template's data-entry cells inherit an ~11pt font, which looks tiny
+        // in the wide/tall crew-sheet cells. The reference FE timesheet uses
+        // Arial bold 18pt for the data area (matching the headers), so reproduce that
+        // exactly. We append that font and clone the style (cellXf) of each data cell
+        // to use it — without touching the 30k+ other cells that share small fonts.
+        var dataFontId = countOf(nf, 'font'); // index of the font we are about to append
+        var bigFont = '<font><b val="1"/><sz val="18"/><name val="Arial"/></font>';
+        var nf2 = nf + bigFont;
+        merged = merged.replace(/<fonts(?:\s[^>]*)?>[\s\S]*?<\/fonts>/, '<fonts count="' + countOf(nf2,'font') + '">' + nf2 + '</fonts>');
+
+        // Parse current cellXfs so we can clone individual xf entries on demand.
+        var mergedCellXfsInner = (merged.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/) || [,''])[1];
+        var xfList = mergedCellXfsInner.match(/<xf\b[^>]*?\/>|<xf\b[^>]*?>[\s\S]*?<\/xf>/g) || [];
+        var bumpCache = {};       // origStyleIdx -> newStyleIdx (with 20pt font)
+        var extraXfs = '';        // new xf entries to append
+        var xfCountBase = xfList.length;
+        function bumpStyle(origIdx) {
+          origIdx = parseInt(origIdx, 10);
+          if (isNaN(origIdx) || origIdx < 0 || origIdx >= xfList.length) return origIdx;
+          if (bumpCache[origIdx] != null) return bumpCache[origIdx];
+          var xf = xfList[origIdx];
+          var bumped;
+          if (/fontId="\d+"/.test(xf)) {
+            bumped = xf.replace(/fontId="\d+"/, 'fontId="' + dataFontId + '"');
+          } else if (/^<xf\b[^>]*\/>$/.test(xf)) {
+            bumped = xf.replace(/\/>$/, ' fontId="' + dataFontId + '" applyFont="1"/>');
+          } else {
+            bumped = xf.replace(/^<xf\b([^>]*)>/, '<xf$1 fontId="' + dataFontId + '" applyFont="1">');
+          }
+          if (bumped.indexOf('applyFont') < 0) {
+            bumped = bumped.replace(/^<xf\b/, '<xf applyFont="1"');
+          }
+          var newIdx = xfCountBase + (extraXfs.match(/<xf\b/g) || []).length;
+          extraXfs += bumped;
+          bumpCache[origIdx] = newIdx;
+          return newIdx;
+        }
+        // finalizeDataFontStyles() must be called after all bumpStyle() calls,
+        // before writing merged styles, to splice in the new xf entries + count.
+        function finalizeDataFontStyles() {
+          if (!extraXfs) return;
+          var allInner = mergedCellXfsInner + extraXfs;
+          merged = merged.replace(/<cellXfs[^>]*>[\s\S]*?<\/cellXfs>/,
+            '<cellXfs count="' + countOf(allInner, 'xf') + '">' + allInner + '</cellXfs>');
+        }
 
         // === Find Information Sheet path ===
         var tplRelsDoc = new DOMParser().parseFromString(tplRelsXml, 'application/xml');
@@ -3666,25 +3877,13 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
           });
 
           // Strip cell-metadata references (vm="N" value-metadata, cm="N" cell-metadata).
-          // The template's A1 is a dynamic-array formula cell flagged vm="1"; once its
-          // <f> is removed it becomes a t="e" #VALUE! cell that still CLAIMS to be a
-          // dynamic-array anchor. A vm/cm reference with no backing formula is the
-          // inconsistency Excel repairs as "Cell information" — drop these refs.
+          // The template's A1 is a dynamic-array formula cell flagged vm="1". Once the
+          // dynamic-array metadata is gone, the cell is a plain error cell (t="e"
+          // #VALUE!) with no dangling reference — which is exactly how the reference
+          // FE timesheet leaves it, and it opens without repair. So we ONLY remove the
+          // vm/cm refs and otherwise leave the cell as-is to match the reference.
           infoSheetXml = infoSheetXml.replace(/(<c\b[^>]*?)\s(?:vm|cm)="\d+"/g, '$1');
-          // Some cells carry both; run twice to catch a second attribute on the same tag.
           infoSheetXml = infoSheetXml.replace(/(<c\b[^>]*?)\s(?:vm|cm)="\d+"/g, '$1');
-
-          // Neutralize error cells (t="e", e.g. cached #VALUE!/#REF!). With their
-          // formula stripped these are stale; convert to a clean empty inline string
-          // so no error value or dangling dynamic-array claim reaches the output.
-          infoSheetXml = infoSheetXml.replace(
-            /<c\b([^>]*?)\bt="e"([^>]*?)(\/>|>[\s\S]*?<\/c>)/g,
-            function(m, pre, post, tail) {
-              var attrs = (pre + post).replace(/\s+/g, ' ').trim();
-              attrs = attrs ? ' ' + attrs : '';
-              return '<c' + attrs + ' t="inlineStr"><is><t xml:space="preserve"></t></is></c>';
-            }
-          );
 
 
           // Convert EVERY shared-string cell to an inline string, regardless of
@@ -3744,9 +3943,15 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
 
           function setCellValue(xml, coord, value) {
             var rn = coord.replace(/[A-Z]+/g, '');
-            // Build a replacement cell, carrying over the existing style index (s="N") if present.
+            // Build a replacement cell, carrying over the existing style index (s="N")
+            // but remapped to a 20pt-font variant so the data is readable.
             function buildCell(styleAttr) {
-              return '<c r="' + coord + '"' + styleAttr +
+              var sa = styleAttr;
+              var sm = styleAttr.match(/s="(\d+)"/);
+              if (sm) {
+                sa = ' s="' + bumpStyle(sm[1]) + '"';
+              }
+              return '<c r="' + coord + '"' + sa +
                 ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(value) + '</t></is></c>';
             }
             // 1) Self-closing existing cell: <c r="A13" s="5"/>
@@ -3857,6 +4062,7 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
             outWbXml = outWbXml.replace('<workbook ', '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
           }
 
+          finalizeDataFontStyles();
           outZip.file('xl/workbook.xml', outWbXml);
           outZip.file('xl/_rels/workbook.xml.rels', outRelsXml);
           outZip.file('xl/styles.xml', merged);
