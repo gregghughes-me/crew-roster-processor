@@ -852,10 +852,43 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
           if (!crewMapId[crewVal]) { crewMapId[crewVal] = []; crewOrderId.push(crewVal); }
           crewMapId[crewVal].push(rr.values);
         });
+
+        // If there are unassigned rows, fold them into the GF/SUPPORT crew (or first crew if no GF).
+        // Identify GF crew by scanning each crew's rows for General Foreman / Superintendent / GF classification.
+        if (unassignedRows.length > 0 && crewOrderId.length > 0) {
+          // Find the classification column locally (the global classColIdx is set later in pipeline)
+          var localClassColIdx = -1;
+          headerRow.forEach(function(h, i) {
+            var hl = h.toLowerCase();
+            if (localClassColIdx < 0 && (hl.indexOf('classif') >= 0 || hl === 'class' || hl.indexOf('position') >= 0 || hl.indexOf('title') >= 0)) {
+              localClassColIdx = i;
+            }
+          });
+
+          var gfOnlyKeywords = /general\s*foreman|superintendent|\bGF\b/i;
+          var gfCrewVal = null;
+          if (localClassColIdx >= 0) {
+            for (var ci = 0; ci < crewOrderId.length; ci++) {
+              var cv = crewOrderId[ci];
+              var hasGf = crewMapId[cv].some(function(rowArr){
+                return gfOnlyKeywords.test(String(rowArr[localClassColIdx] || ''));
+              });
+              if (hasGf) { gfCrewVal = cv; break; }
+            }
+          }
+          var targetCrewVal = gfCrewVal || crewOrderId[0];
+          // Prepend unassigned rows to the target crew
+          crewMapId[targetCrewVal] = unassignedRows.concat(crewMapId[targetCrewVal]);
+          processingLog.info.push((gfCrewVal ? 'Merged '+unassignedRows.length+' unassigned row(s) into GF/SUPPORT crew "'+gfCrewVal+'"' : 'Merged '+unassignedRows.length+' unassigned row(s) into first crew "'+targetCrewVal+'" (no GF found)')+' in '+f.name);
+          unassignedRows = [];
+        }
+
         crewOrderId.forEach(function(crewVal) {
           var lines = [headerLine].concat(crewMapId[crewVal].map(function(r){ return r.join('\t'); }));
           allChunks.push({ label: f.name+' / Crew: '+crewVal, text: '=== FILE: '+f.name+' | Source Crew: '+crewVal+' ===\n'+lines.join('\n') });
         });
+
+        // Only emit an UNASSIGNED chunk if there were unassigned rows AND no crews to merge them into
         if (unassignedRows.length > 0) {
           var uLines = [headerLine].concat(unassignedRows.map(function(r){ return r.join('\t'); }));
           allChunks.push({ label: f.name+' / UNASSIGNED', text: '=== FILE: '+f.name+' | Source Crew: (none assigned) ===\n[NOTE: these '+unassignedRows.length+' row(s) have no crew assignment in the source. Place them under a SUPPORT crew or flag for review.]\n'+uLines.join('\n') });
@@ -1107,31 +1140,78 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
 
           } else {
           // ── Strategy 5: foreman/GF row as crew boundary ──
-          var foremanKeywords = /general\s*foreman|superintendent|crew\s*foreman|\bGF\b/i;
+          // Each Foreman or General Foreman row starts a new crew. Matches:
+          //   General Foreman, Superintendent, Crew Foreman, GF (abbrev)
+          //   Foreman (plain — standard line-crew leader)
+          //   FM (abbrev for Foreman, common in contractor rosters)
+          var foremanKeywords = /general\s*foreman|superintendent|crew\s*foreman|\bforeman\b|\bGF\b|\bFM\b/i;
           var hasForeman = classColIdx >= 0 && dataRows.some(function(rr) {
             return rr.nonEmpty.length >= 2 && foremanKeywords.test(String(rr.values[classColIdx] || ''));
           });
 
           if (hasForeman) {
-            var currentCrewRows = [];
-            var crewChunkNum = 0;
+            // Specifically GF (General Foreman / Superintendent / GF abbrev) — distinct from line Foreman
+            var gfOnlyKeywords = /general\s*foreman|superintendent|\bGF\b/i;
 
-            function flushForeman() {
+            // Build crews in order. Track which crew (if any) contains the GF so orphan
+            // rows (rows before ANY foreman boundary) can be folded into it.
+            var crews = []; // [{ leaderClass, rows, isGfCrew }]
+            var currentCrewRows = [];
+            var currentLeaderClass = null;
+
+            function flushCrew() {
               if (currentCrewRows.length === 0) return;
-              crewChunkNum++;
-              var lines = [headerLine].concat(currentCrewRows.map(function(rr){ return rr.values.join('\t'); }));
-              allChunks.push({ label: f.name+' / Crew '+crewChunkNum, text: '=== FILE: '+f.name+' | Crew '+crewChunkNum+' ===\n'+lines.join('\n') });
+              var isGf = currentLeaderClass && gfOnlyKeywords.test(currentLeaderClass);
+              crews.push({ leaderClass: currentLeaderClass, rows: currentCrewRows, isGfCrew: isGf });
               currentCrewRows = [];
+              currentLeaderClass = null;
             }
 
             dataRows.filter(function(rr){ return rr.nonEmpty.length >= 2; }).forEach(function(rr) {
               var classVal = String(rr.values[classColIdx] || '');
-              if (foremanKeywords.test(classVal) && currentCrewRows.length > 0) {
-                flushForeman();
+              if (foremanKeywords.test(classVal)) {
+                // New crew starts here
+                flushCrew();
+                currentLeaderClass = classVal;
               }
               currentCrewRows.push(rr);
             });
-            flushForeman();
+            flushCrew();
+
+            // Identify orphan crews — those with no foreman/GF (they appeared before any boundary)
+            var orphanRows = [];
+            var realCrews = [];
+            crews.forEach(function(c) {
+              if (c.leaderClass === null) {
+                // No foreman led this group — orphan
+                orphanRows = orphanRows.concat(c.rows);
+              } else {
+                realCrews.push(c);
+              }
+            });
+
+            // Merge orphans into the GF crew if one exists; otherwise into the first crew.
+            if (orphanRows.length > 0 && realCrews.length > 0) {
+              var gfCrew = realCrews.filter(function(c){ return c.isGfCrew; })[0];
+              var target = gfCrew || realCrews[0];
+              // Prepend orphans so the orphan rows appear before the leader row in the chunk
+              target.rows = orphanRows.concat(target.rows);
+              processingLog.info.push((gfCrew ? 'Merged '+orphanRows.length+' orphan row(s) into GF/SUPPORT crew' : 'Merged '+orphanRows.length+' orphan row(s) into first crew (no GF found)')+' in '+f.name);
+              orphanRows = [];
+            }
+
+            // Emit chunks. If only orphans exist (no foremen at all — shouldn't happen here but be safe), emit them as one chunk.
+            if (realCrews.length === 0 && orphanRows.length > 0) {
+              var lines0 = [headerLine].concat(orphanRows.map(function(rr){ return rr.values.join('\t'); }));
+              allChunks.push({ label: f.name+' / Crew 1', text: '=== FILE: '+f.name+' | Crew 1 ===\n'+lines0.join('\n') });
+            } else {
+              realCrews.forEach(function(c, idx) {
+                var crewChunkNum = idx + 1;
+                var lines = [headerLine].concat(c.rows.map(function(rr){ return rr.values.join('\t'); }));
+                var labelSuffix = c.isGfCrew ? ' (SUPPORT/GF)' : '';
+                allChunks.push({ label: f.name+' / Crew '+crewChunkNum+labelSuffix, text: '=== FILE: '+f.name+' | Crew '+crewChunkNum+labelSuffix+' ===\n'+lines.join('\n') });
+              });
+            }
           } else {
             // ── Strategy 6: fixed-size block fallback ──
             var nonBlankRows = dataRows.filter(function(rr){ return rr.nonEmpty.length >= 2; });
