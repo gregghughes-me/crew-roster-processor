@@ -3653,14 +3653,48 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
           var COMPANY = contractor || '';
 
           function setCellValue(xml, coord, value) {
-            var newCell = '<c r="' + coord + '" t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(value) + '</t></is></c>';
             var rn = coord.replace(/[A-Z]+/g, '');
-            var sc = new RegExp('<c r="' + coord + '"[^>]*/>');
-            if (sc.test(xml)) return xml.replace(sc, newCell);
-            var full = new RegExp('<c r="' + coord + '"[^>]*>[\\s\\S]*?<\/c>');
-            if (full.test(xml)) return xml.replace(full, newCell);
-            var rowPat = new RegExp('(<row r="' + rn + '"[^>]*>)');
-            if (rowPat.test(xml)) return xml.replace(rowPat, '$1' + newCell);
+            // Build a replacement cell, carrying over the existing style index (s="N") if present.
+            function buildCell(styleAttr) {
+              return '<c r="' + coord + '"' + styleAttr +
+                ' t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(value) + '</t></is></c>';
+            }
+            // 1) Self-closing existing cell: <c r="A13" s="5"/>
+            var sc = new RegExp('<c r="' + coord + '"((?:\\s+[a-zA-Z:]+="[^"]*")*?)\\s*/>');
+            var m = xml.match(sc);
+            if (m) {
+              var s1 = (m[1].match(/\s+s="\d+"/) || [''])[0];
+              return xml.replace(sc, buildCell(s1));
+            }
+            // 2) Full existing cell: <c r="A13" s="5" t="s"><v>..</v></c>
+            var full = new RegExp('<c r="' + coord + '"((?:\\s+[a-zA-Z:]+="[^"]*")*?)\\s*>[\\s\\S]*?<\/c>');
+            m = xml.match(full);
+            if (m) {
+              var s2 = (m[1].match(/\s+s="\d+"/) || [''])[0];
+              return xml.replace(full, buildCell(s2));
+            }
+            // 3) No existing cell — insert into the row in column order so cells stay sorted.
+            var newCell = buildCell('');
+            function colNum(ref) {
+              var letters = ref.replace(/[0-9]+/g, ''), n = 0;
+              for (var i = 0; i < letters.length; i++) n = n * 26 + (letters.charCodeAt(i) - 64);
+              return n;
+            }
+            var targetCol = colNum(coord);
+            var rowPat = new RegExp('(<row r="' + rn + '"[^>]*>)([\\s\\S]*?)(<\/row>)');
+            var rm = xml.match(rowPat);
+            if (rm) {
+              var inner = rm[2];
+              var cellRe = /<c r="([A-Z]+\d+)"[\s\S]*?(?:\/>|<\/c>)/g, cm, insertAt = null, last = 0;
+              while ((cm = cellRe.exec(inner)) !== null) {
+                if (colNum(cm[1]) > targetCol) { insertAt = cm.index; break; }
+                last = cellRe.lastIndex;
+              }
+              var newInner = (insertAt === null)
+                ? inner.slice(0, last) + newCell + inner.slice(last)
+                : inner.slice(0, insertAt) + newCell + inner.slice(insertAt);
+              return xml.replace(rowPat, rm[1] + newInner + rm[3]);
+            }
             return xml;
           }
           function fixTotals(xml) {
