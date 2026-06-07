@@ -762,38 +762,81 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
 
       // ── Strategy 0: explicit crew-identifier column ──
       // The contractor has already assigned every row to a named crew (e.g. "Sutton-001",
-      // "PDA-PLC-01", "Crew-001"). Column header is typically "Crew Name", "Crew ID",
-      // "Crew Number", or "Crew #". Values are short identifiers (NOT person names).
-      // This is the most authoritative signal — when present, group strictly by it and
-      // skip all other heuristics.
+      // "PDA-PLC-01", "Crew-001", or just 1/2/3). Column header is typically "Crew Name",
+      // "Crew ID", "Crew Number", "Crew #", or just "Crew". Values are short identifiers
+      // (NOT person names). This is the most authoritative signal — when present, group
+      // strictly by it and skip all other heuristics.
       var crewIdColIdx = -1;
-      headerRow.forEach(function(h, i) {
-        var hl = h.toLowerCase();
-        // Match "crew name" / "crew id" / "crew number" / "crew #" / "crew code"
-        // Excludes "crew lead name" / "crew foreman" — those are person-assignment columns (Strategy 1)
-        if (hl.indexOf('crew') >= 0
-            && (hl.indexOf('name') >= 0 || hl.indexOf('id') >= 0 || hl.indexOf('number') >= 0 || hl.indexOf('#') >= 0 || hl.indexOf('code') >= 0)
-            && hl.indexOf('lead') < 0 && hl.indexOf('foreman') < 0
-            && hl.indexOf('first') < 0 && hl.indexOf('last') < 0
-            && hl.indexOf('member') < 0) {
-          // Validate: values must be short identifier-like (not full names), mostly populated, and have repeats
-          var vals = rawRows.filter(function(rr, idx){ return idx > headerRowIdx && rr.nonEmpty.length >= 2; })
-                            .map(function(rr){ return (rr.values[i] || '').trim(); });
-          var filled = vals.filter(function(v){ return v.length > 0; });
-          if (filled.length < vals.length * 0.5) return; // too sparse
-          var unique = {};
-          filled.forEach(function(v){ unique[v] = (unique[v]||0) + 1; });
-          var uniqueCount = Object.keys(unique).length;
-          // Must have repeats (each crew has multiple members) AND not be one-name-per-row
-          if (uniqueCount === 0 || uniqueCount === filled.length) return;
-          // Values shouldn't look like person names (avg length < 25, few spaces)
-          var avgLen = filled.reduce(function(s,v){ return s+v.length; }, 0) / filled.length;
-          var withSpace = filled.filter(function(v){ return v.indexOf(' ') >= 0; }).length;
-          if (avgLen > 25) return; // probably person names
-          if (withSpace > filled.length * 0.5) return; // most values have spaces → person names
-          crewIdColIdx = i;
+
+      // Fuzzy-match the word "crew" — handles common typos like "crwe", "creww", "crw"
+      function looksLikeCrewWord(s) {
+        if (!s) return false;
+        if (s.indexOf('crew') >= 0) return true;
+        // Match "crwe" (transposed), "crw" (abbreviation), "creww" (extra char) etc.
+        // Allow up to 1 char distance from "crew" in any 4-char substring
+        for (var i=0; i<=s.length-3; i++) {
+          var sub = s.substr(i, 4);
+          if (/^c.?r.?w.?e?$/.test(sub) && sub.indexOf('c') >= 0 && sub.indexOf('r') >= 0 && sub.indexOf('w') >= 0) return true;
+          if (sub === 'crwe' || sub === 'creww' || sub === 'crew') return true;
         }
+        // Standalone "crw" abbreviation
+        if (/(^|[\s_#-])crw($|[\s_#-])/.test(s)) return true;
+        return false;
+      }
+
+      // Per-column validation: returns true if values look like crew identifiers
+      function validateAsCrewIds(colIdx) {
+        var vals = rawRows.filter(function(rr, idx){ return idx > headerRowIdx && rr.nonEmpty.length >= 2; })
+                          .map(function(rr){ return (rr.values[colIdx] || '').trim(); });
+        var filled = vals.filter(function(v){ return v.length > 0; });
+        if (filled.length < vals.length * 0.5) return false; // too sparse
+        var unique = {};
+        filled.forEach(function(v){ unique[v] = (unique[v]||0) + 1; });
+        var uniqueCount = Object.keys(unique).length;
+        if (uniqueCount === 0 || uniqueCount === filled.length) return false; // no repeats, or all unique
+        var avgLen = filled.reduce(function(s,v){ return s+v.length; }, 0) / filled.length;
+        var withSpace = filled.filter(function(v){ return v.indexOf(' ') >= 0; }).length;
+        if (avgLen > 25) return false; // probably person names
+        if (withSpace > filled.length * 0.5) return false; // most values have spaces → person names
+        return true;
+      }
+
+      // Pass A: header explicitly names the column (with fuzzy "crew" matching)
+      headerRow.forEach(function(h, i) {
+        if (crewIdColIdx >= 0) return;
+        var hl = h.toLowerCase();
+        if (!looksLikeCrewWord(hl)) return;
+        // Exclude person-assignment columns (Strategy 1's territory)
+        if (hl.indexOf('lead') >= 0 || hl.indexOf('foreman') >= 0 || hl.indexOf('first') >= 0
+            || hl.indexOf('last') >= 0 || hl.indexOf('member') >= 0 || hl.indexOf('employee') >= 0) return;
+        if (validateAsCrewIds(i)) crewIdColIdx = i;
       });
+
+      // Pass B: leftmost column (cols 0-2) where values are obviously crew IDs even though
+      // the header is missing/odd. Conservative — only triggers on small integer sequences
+      // (1, 2, 3...) to avoid false-matching state codes, ticket numbers, or other repeating data.
+      if (crewIdColIdx < 0) {
+        for (var ci = 0; ci < Math.min(3, headerRow.length); ci++) {
+          var vals = rawRows.filter(function(rr, idx){ return idx > headerRowIdx && rr.nonEmpty.length >= 2; })
+                            .map(function(rr){ return (rr.values[ci] || '').trim(); });
+          var filled = vals.filter(function(v){ return v.length > 0; });
+          if (filled.length < vals.length * 0.7) continue;
+          // Must have meaningful repetition (avg 2+ rows per crew)
+          var uniq = {};
+          filled.forEach(function(v){ uniq[v] = (uniq[v]||0) + 1; });
+          var uniqueCount = Object.keys(uniq).length;
+          if (uniqueCount === 0 || uniqueCount > filled.length / 2) continue;
+          // Strict: all values must be small integers (1-99). Sequences like 1,1,2,2,3 are
+          // unmistakable crew assignments; anything else (state codes, abbreviations) gets passed.
+          var allSmallInts = filled.every(function(v){ return /^\d{1,2}$/.test(v); });
+          if (!allSmallInts) continue;
+          // Sanity check: max integer should be reasonable for crew count (≤ 50)
+          var maxInt = Math.max.apply(null, filled.map(function(v){ return parseInt(v,10); }));
+          if (maxInt > 50) continue;
+          crewIdColIdx = ci;
+          break;
+        }
+      }
 
       if (crewIdColIdx >= 0) {
         // Group strictly by crew identifier — most authoritative grouping available
