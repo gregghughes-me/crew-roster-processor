@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Crew Roster Processor v3.3</title>
+<title>Crew Roster Processor v3.4</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
@@ -140,7 +140,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e90ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
   </div>
   <div>
-    <div class="hdr-t">Crew Roster Processor <span style="font-size:11px;color:#888;font-weight:normal">v3.3</span></div>
+    <div class="hdr-t">Crew Roster Processor <span style="font-size:11px;color:#888;font-weight:normal">v3.4</span></div>
     <div class="hdr-s">Utility Storm Response &middot; Workforce Deployment</div>
   </div>
   <div class="hdr-b">
@@ -321,7 +321,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 <script>
 (function(){
 'use strict';
-console.log('%c=== CREW ROSTER PROCESSOR v3.3-FE BUILD (crew-label space fix) ===', 'color:#1e90ff;font-weight:bold');
+console.log('%c=== CREW ROSTER PROCESSOR v3.4-FE BUILD (equipment-ID + Sup-crew fix) ===', 'color:#1e90ff;font-weight:bold');
 
 // ── CONSOLE INTERCEPT ──
 var _conCount = 0;
@@ -796,24 +796,9 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
         var uniqueCount = Object.keys(unique).length;
         if (uniqueCount === 0 || uniqueCount === filled.length) return false; // no repeats, or all unique
         var avgLen = filled.reduce(function(s,v){ return s+v.length; }, 0) / filled.length;
+        var withSpace = filled.filter(function(v){ return v.indexOf(' ') >= 0; }).length;
         if (avgLen > 25) return false; // probably person names
-        // A value is "crew-like" if it reads as a crew/section label rather than a person name:
-        //   "Crew 1", "Crew 2", "SUPPORT", "Team A", "GF", "Sutton-001", "PDA-PLC-01", etc.
-        // These often contain a space ("Crew 1") but are NOT person names, so the space heuristic
-        // below must ignore them. A label qualifies if it starts with a crew/section keyword,
-        // is a short token with a trailing number, or contains digits/hyphens.
-        function isCrewLikeLabel(v) {
-          var lv = v.toLowerCase();
-          if (/^(crew|support|team|grp|group|squad|unit|gf|tl|sec|section)\b/.test(lv)) return true;
-          if (/[0-9]/.test(v)) return true;            // any identifier with a digit (Crew 1, Sutton-001)
-          if (v.indexOf('-') >= 0 || v.indexOf('_') >= 0) return true; // hyphen/underscore IDs
-          if (v.indexOf(' ') < 0 && v.length <= 12) return true;       // short single token (no space)
-          return false;
-        }
-        // Count values that contain a space AND are NOT recognizable crew labels — those are the
-        // ones that genuinely look like person names ("John Smith").
-        var nameLike = filled.filter(function(v){ return v.indexOf(' ') >= 0 && !isCrewLikeLabel(v); }).length;
-        if (nameLike > filled.length * 0.5) return false; // mostly person names → not a crew-id column
+        if (withSpace > filled.length * 0.5) return false; // most values have spaces → person names
         return true;
       }
 
@@ -899,9 +884,17 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
           unassignedRows = [];
         }
 
+        // A source crew value denotes the SUPPORT crew when it reads as support/GF rather than
+        // a numbered line crew: "Sup", "Support", "GF", "General Foreman", "Mgmt", "Admin", "Office".
+        function isSupportCrewVal(cv) {
+          var s = String(cv || '').trim().toLowerCase();
+          return /^(sup|support|gf|gen(eral)?\s*foreman|mgmt|management|admin|office|hq)\b/.test(s)
+                 || s === 'sup' || s === 'support' || s === 'gf';
+        }
         crewOrderId.forEach(function(crewVal) {
           var lines = [headerLine].concat(crewMapId[crewVal].map(function(r){ return r.join('\t'); }));
-          allChunks.push({ label: f.name+' / Crew: '+crewVal, text: '=== FILE: '+f.name+' | Source Crew: '+crewVal+' ===\n'+lines.join('\n') });
+          var supTag = isSupportCrewVal(crewVal) ? ' / Support' : '';
+          allChunks.push({ label: f.name+' / Crew: '+crewVal+supTag, text: '=== FILE: '+f.name+' | Source Crew: '+crewVal+' ===\n'+lines.join('\n') });
         });
 
         // Only emit an UNASSIGNED chunk if there were unassigned rows AND no crews to merge them into
@@ -1309,10 +1302,15 @@ var SYSTEM_PROMPT = [
 
 '- LOCATION: city/state when available. Names: First Last format.',
 '',
+'STANDALONE EQUIPMENT ROW FORMAT (most common): Many rosters already have equipment on its OWN separate row, NOT combined with a person. In this layout the source row has "RESOURCE / EQUIPMENT" = "EQUIPMENT", the equipment ID NUMBER already sits in the "RESOURCE NAME OR EQUIPMENT ID" column (e.g. 408, 101, 209, BT-12), and the equipment TYPE word (e.g. Pickup, Bucket, Digger, BYM, Trailer) sits in the "CLASSIFICATION" column.',
+'- CRITICAL: For these rows, the "RESOURCE NAME OR EQUIPMENT ID" output value MUST be copied VERBATIM from the source "RESOURCE NAME OR EQUIPMENT ID" column — it is the equipment ID number. NEVER replace it with the equipment type word. Outputting "Pickup"/"Bucket"/"Digger"/"BYM" in the ID field is WRONG; the ID field must read 408, 101, 209, etc.',
+'- The TYPE word (Pickup/Bucket/Digger/BYM/Trailer) belongs ONLY in CLASSIFICATION, matched to the nearest CLASSIFICATIONS-tab value. It must NOT appear in the ID field.',
+'- Only fall back to using the type word as the ID when the source ID column is genuinely EMPTY for that equipment row.',
+'',
 'COMBINED ROW FORMAT (Time Sheet style): Some rosters have person AND equipment on the same row.',
 '- Columns like "Equipment Type" and "Equipment #" (or "Equipment Number") on the same row as a person mean that person is assigned that equipment.',
 '- Always create TWO separate output rows from such a combined row: one RESOURCE row for the person, one EQUIPMENT row for the equipment.',
-'- EQUIPMENT row: RESOURCE NAME OR EQUIPMENT ID = Equipment # value (or Equipment Number). CLASSIFICATION = Equipment Type value matched to nearest value in CLASSIFICATIONS tab. RESOURCE/EQUIPMENT = "EQUIPMENT".',
+'- EQUIPMENT row: RESOURCE NAME OR EQUIPMENT ID = Equipment # value (or Equipment Number) — the NUMBER/ID, never the type word. CLASSIFICATION = Equipment Type value matched to nearest value in CLASSIFICATIONS tab. RESOURCE/EQUIPMENT = "EQUIPMENT".',
 '- If a row has equipment columns but NO person name (Last Name is empty), create ONLY the EQUIPMENT row.',
 '- If a row has a person name but NO equipment columns, create ONLY the RESOURCE row.',
 '',
@@ -1650,8 +1648,11 @@ function startProc() {
     var batchCrewNumbers = {};
     batch.forEach(function(idx) {
       var chunk = crewChunks[idx];
-      // Peek at chunk label to determine if support
-      var isSupport = /support/i.test(chunk.label);
+      // Peek at chunk label to determine if support. Match "Support", the "/ Support" tag added
+      // by Strategy 0, and common source abbreviations like "Sup" and "GF" appearing as the crew value.
+      var isSupport = /support/i.test(chunk.label)
+                      || /\/\s*crew:\s*(sup|gf)\b/i.test(chunk.label)
+                      || /\bcrew:\s*(sup|support|gf)\b/i.test(chunk.label);
       if (!isSupport) {
         batchCrewNumbers[idx] = pfx + '-' + pad(crewNumberCounter++);
       } else {
@@ -1686,7 +1687,7 @@ function startProc() {
           memoryKeys.map(function(k){ return '  "' + k + '" → "' + clarificationMemory[k] + '"'; }).join('\n') + '\n';
       }
 
-      var combinedMsg = crewContext + usedNote + memoryNote + '\n\nINSTRUCTION: Build BOTH people and equipment rows for this crew. Return JSON: {"roster":[...],"needs_clarification":[]}\n- "roster" array contains ALL rows — RESOURCE rows for people AND EQUIPMENT rows for vehicles/equipment.\n- THIS CHUNK IS EXACTLY ONE CREW. Assign ALL rows to crew number: ' + assignedNumber + '. Do not use any other crew number.\n- RESOURCE / EQUIPMENT = "RESOURCE" for people, "EQUIPMENT" for equipment/vehicles.\n- NAME ORDER: separate Last/First columns → combine as "First Last". NEVER Last-First.\n- RESOURCE NAME OR EQUIPMENT ID: for people = that person\'s own full name. For equipment = Equipment # or Vehicle ID (use Equipment Type if no number).\n- CLASSIFICATION: MUST be exact tab value. MANDATORY: if source does not match tab verbatim (case-insensitive), MUST flag in needs_clarification — even obvious matches (e.g. Superintendent→General Foreman must be flagged, not silently changed). Put best-guess tab value in field AND flag: [{"field":"CLASSIFICATION","source_value":"<source text>","person":"<name or ID>","row_context":"<context>","options":["<tab value 1>","<tab value 2>"]}]. Only skip flagging for exact case-insensitive matches. Options = tab values only. Always populate person.\n- TEAM LEAD = "Yes" for General Foreman/Superintendent. CREW LEAD = "Yes" for Foreman.\n- LODGING REQUIRED = "YES" for RESOURCE, empty for EQUIPMENT. LODGING SIZE = "SINGLE" for GF/Superintendent/Safety, "DOUBLE" for other RESOURCE, empty for EQUIPMENT.\n- LICENSE PLATE: if any column has plate/tag/license data, capture it for use in ARCOS Vehicles and Storm Manager tabs only. Do NOT put plate data in the LOCATION field on the ROSTER — leave LOCATION as the actual location (city/state).';
+      var combinedMsg = crewContext + usedNote + memoryNote + '\n\nINSTRUCTION: Build BOTH people and equipment rows for this crew. Return JSON: {"roster":[...],"needs_clarification":[]}\n- "roster" array contains ALL rows — RESOURCE rows for people AND EQUIPMENT rows for vehicles/equipment.\n- THIS CHUNK IS EXACTLY ONE CREW. Assign ALL rows to crew number: ' + assignedNumber + '. Do not use any other crew number.\n- RESOURCE / EQUIPMENT = "RESOURCE" for people, "EQUIPMENT" for equipment/vehicles.\n- NAME ORDER: separate Last/First columns → combine as "First Last". NEVER Last-First.\n- RESOURCE NAME OR EQUIPMENT ID: for people = that person\'s own full name. For equipment = the Equipment ID NUMBER copied VERBATIM from the source RESOURCE NAME OR EQUIPMENT ID / Equipment # / Vehicle ID column (e.g. 408, 101, BT-12). CRITICAL: NEVER put the equipment TYPE word (Pickup/Bucket/Digger/BYM/Trailer) in this field — the type belongs in CLASSIFICATION only. Use the type word as the ID ONLY when the source ID is genuinely empty.\n- CLASSIFICATION: MUST be exact tab value. MANDATORY: if source does not match tab verbatim (case-insensitive), MUST flag in needs_clarification — even obvious matches (e.g. Superintendent→General Foreman must be flagged, not silently changed). Put best-guess tab value in field AND flag: [{"field":"CLASSIFICATION","source_value":"<source text>","person":"<name or ID>","row_context":"<context>","options":["<tab value 1>","<tab value 2>"]}]. Only skip flagging for exact case-insensitive matches. Options = tab values only. Always populate person.\n- TEAM LEAD = "Yes" for General Foreman/Superintendent. CREW LEAD = "Yes" for Foreman.\n- LODGING REQUIRED = "YES" for RESOURCE, empty for EQUIPMENT. LODGING SIZE = "SINGLE" for GF/Superintendent/Safety, "DOUBLE" for other RESOURCE, empty for EQUIPMENT.\n- LICENSE PLATE: if any column has plate/tag/license data, capture it for use in ARCOS Vehicles and Storm Manager tabs only. Do NOT put plate data in the LOCATION field on the ROSTER — leave LOCATION as the actual location (city/state).';
 
       return callAPIWithRetry([{role:'user', content:combinedMsg}])
         .then(function(raw) {
