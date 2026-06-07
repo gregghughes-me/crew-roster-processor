@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Crew Roster Processor v3.0</title>
+<title>Crew Roster Processor v3.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
@@ -140,7 +140,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e90ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
   </div>
   <div>
-    <div class="hdr-t">Crew Roster Processor</div>
+    <div class="hdr-t">Crew Roster Processor <span style="font-size:11px;color:#888;font-weight:normal">v3.1</span></div>
     <div class="hdr-s">Utility Storm Response &middot; Workforce Deployment</div>
   </div>
   <div class="hdr-b">
@@ -1027,7 +1027,12 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
           // A chunk is "support-only" if every row's Classification col matches support keywords
           var classColIdx2 = -1;
           headerRow.forEach(function(h, i) {
-            if (/classif|position|title|role/i.test(h)) classColIdx2 = i;
+            var hl = h.toLowerCase().trim();
+            if (classColIdx2 < 0 && (hl === 'class' || hl === 'role' || hl === 'trade'
+                || /classif|position|title|role/i.test(h)
+                || (hl.indexOf('job') >= 0 && (hl.indexOf('class') >= 0 || hl.indexOf('title') >= 0)))) {
+              classColIdx2 = i;
+            }
           });
           var supportKeywords = /superintendent|general\s*foreman|\bGF\b|mechanic|safety|manager|coordinator/i;
 
@@ -1095,8 +1100,15 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
           // Also need a classification col to identify support rows
           var classColIdx = -1;
           headerRow.forEach(function(h, i) {
-            var hl = h.toLowerCase();
-            if (hl.indexOf('classif') >= 0 || hl.indexOf('position') >= 0 || hl.indexOf('title') >= 0) classColIdx = i;
+            var hl = h.toLowerCase().trim();
+            // Match: Classification, Class, Position, Title, Role, Job Title, Job Class, Trade
+            if (classColIdx < 0 && (hl === 'class' || hl === 'role' || hl === 'trade'
+                || hl.indexOf('classif') >= 0
+                || hl.indexOf('position') >= 0
+                || hl.indexOf('title') >= 0
+                || (hl.indexOf('job') >= 0 && (hl.indexOf('class') >= 0 || hl.indexOf('title') >= 0)))) {
+              classColIdx = i;
+            }
           });
 
           var lineForeman = /\bforeman\b/i;
