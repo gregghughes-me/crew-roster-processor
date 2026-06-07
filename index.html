@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Crew Roster Processor v3.1</title>
+<title>Crew Roster Processor v3.3</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
@@ -140,7 +140,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1e90ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
   </div>
   <div>
-    <div class="hdr-t">Crew Roster Processor <span style="font-size:11px;color:#888;font-weight:normal">v3.1</span></div>
+    <div class="hdr-t">Crew Roster Processor <span style="font-size:11px;color:#888;font-weight:normal">v3.3</span></div>
     <div class="hdr-s">Utility Storm Response &middot; Workforce Deployment</div>
   </div>
   <div class="hdr-b">
@@ -321,7 +321,7 @@ body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(
 <script>
 (function(){
 'use strict';
-console.log('%c=== CREW ROSTER PROCESSOR v3.2-FE BUILD (FE timesheets enabled) ===', 'color:#1e90ff;font-weight:bold');
+console.log('%c=== CREW ROSTER PROCESSOR v3.3-FE BUILD (crew-label space fix) ===', 'color:#1e90ff;font-weight:bold');
 
 // ── CONSOLE INTERCEPT ──
 var _conCount = 0;
@@ -796,9 +796,24 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
         var uniqueCount = Object.keys(unique).length;
         if (uniqueCount === 0 || uniqueCount === filled.length) return false; // no repeats, or all unique
         var avgLen = filled.reduce(function(s,v){ return s+v.length; }, 0) / filled.length;
-        var withSpace = filled.filter(function(v){ return v.indexOf(' ') >= 0; }).length;
         if (avgLen > 25) return false; // probably person names
-        if (withSpace > filled.length * 0.5) return false; // most values have spaces → person names
+        // A value is "crew-like" if it reads as a crew/section label rather than a person name:
+        //   "Crew 1", "Crew 2", "SUPPORT", "Team A", "GF", "Sutton-001", "PDA-PLC-01", etc.
+        // These often contain a space ("Crew 1") but are NOT person names, so the space heuristic
+        // below must ignore them. A label qualifies if it starts with a crew/section keyword,
+        // is a short token with a trailing number, or contains digits/hyphens.
+        function isCrewLikeLabel(v) {
+          var lv = v.toLowerCase();
+          if (/^(crew|support|team|grp|group|squad|unit|gf|tl|sec|section)\b/.test(lv)) return true;
+          if (/[0-9]/.test(v)) return true;            // any identifier with a digit (Crew 1, Sutton-001)
+          if (v.indexOf('-') >= 0 || v.indexOf('_') >= 0) return true; // hyphen/underscore IDs
+          if (v.indexOf(' ') < 0 && v.length <= 12) return true;       // short single token (no space)
+          return false;
+        }
+        // Count values that contain a space AND are NOT recognizable crew labels — those are the
+        // ones that genuinely look like person names ("John Smith").
+        var nameLike = filled.filter(function(v){ return v.indexOf(' ') >= 0 && !isCrewLikeLabel(v); }).length;
+        if (nameLike > filled.length * 0.5) return false; // mostly person names → not a crew-id column
         return true;
       }
 
