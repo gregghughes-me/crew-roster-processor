@@ -3498,170 +3498,228 @@ function base64ToUint8Array(b64str) {
 }
 
 function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
-  if (!window.JSZip) { console.error('JSZip not loaded'); callback(xlsxBytes); return; }
+  var done = false;
+  function finishOK(bytes) { if (done) return; done = true; callback(bytes); }
+  function fallback(reason) {
+    if (done) return; done = true;
+    console.error('buildFETimesheets fallback: ' + reason);
+    addMsg('err', 'FE Timesheet build issue (' + reason + ') — using standard format');
+    try { buildStyledTimesheets(xlsxBytes, rosterRows, contractor, callback); }
+    catch (e) { callback(xlsxBytes); }
+  }
 
-  var crewOrder = [], crewMap = {};
-  rosterRows.forEach(function(r) {
-    var cn = r['CREW NUMBER'] || '';
-    if (!crewMap[cn]) { crewMap[cn] = { people: [], equipment: [] }; crewOrder.push(cn); }
-    if (r['RESOURCE / EQUIPMENT'] === 'RESOURCE') crewMap[cn].people.push(r);
-    else if (r['RESOURCE / EQUIPMENT'] === 'EQUIPMENT') crewMap[cn].equipment.push(r);
-  });
-  var dedup = {}; crewOrder = crewOrder.filter(function(cn){ if(dedup[cn])return false; dedup[cn]=true; return true; });
+  function xmlEsc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function blockOf(xml, tag) {
+    var m = xml.match(new RegExp('<' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)</' + tag + '>'));
+    return m ? m[1] : '';
+  }
+  function countOf(block, item) {
+    var m = block.match(new RegExp('<' + item + '[ />]', 'g'));
+    return m ? m.length : 0;
+  }
 
-  var templateBytes = base64ToUint8Array(FE_TEMPLATE_B64);
-  var xlsxU8 = (xlsxBytes instanceof Uint8Array) ? xlsxBytes
-    : (xlsxBytes instanceof ArrayBuffer) ? new Uint8Array(xlsxBytes)
-    : new Uint8Array(xlsxBytes);
+  try {
+    if (!window.JSZip) { fallback('JSZip not loaded'); return; }
 
-  Promise.all([JSZip.loadAsync(templateBytes), JSZip.loadAsync(xlsxU8)]).then(function(zips) {
-    var tplZip = zips[0], outZip = zips[1];
+    var crewOrder = [], crewMap = {};
+    rosterRows.forEach(function(r) {
+      var cn = r['CREW NUMBER'] || '';
+      if (!crewMap[cn]) { crewMap[cn] = { people: [], equipment: [] }; crewOrder.push(cn); }
+      if (r['RESOURCE / EQUIPMENT'] === 'RESOURCE') crewMap[cn].people.push(r);
+      else if (r['RESOURCE / EQUIPMENT'] === 'EQUIPMENT') crewMap[cn].equipment.push(r);
+    });
+    var dedup = {}; crewOrder = crewOrder.filter(function(cn){ if(dedup[cn])return false; dedup[cn]=true; return true; });
+    if (crewOrder.length === 0) { fallback('no crews'); return; }
 
-    return Promise.all([
-      tplZip.file('xl/workbook.xml').async('string'),
-      tplZip.file('xl/_rels/workbook.xml.rels').async('string'),
-      outZip.file('xl/workbook.xml').async('string'),
-      outZip.file('xl/_rels/workbook.xml.rels').async('string'),
-      outZip.file('[Content_Types].xml').async('string'),
-    ]).then(function(parts) {
-      var tplWbXml = parts[0], tplRelsXml = parts[1];
-      var outWbXml = parts[2], outRelsXml = parts[3], outCtXml = parts[4];
+    var templateBytes = base64ToUint8Array(FE_TEMPLATE_B64);
+    var xlsxU8 = (xlsxBytes instanceof Uint8Array) ? xlsxBytes
+      : (xlsxBytes instanceof ArrayBuffer) ? new Uint8Array(xlsxBytes)
+      : new Uint8Array(xlsxBytes);
 
-      // Map template relationship IDs to file paths
-      var tplRelsDoc = new DOMParser().parseFromString(tplRelsXml, 'application/xml');
-      var tplRelMap = {};
-      Array.prototype.forEach.call(tplRelsDoc.getElementsByTagName('Relationship'), function(rel) {
-        var tgt = rel.getAttribute('Target') || '';
-        tplRelMap[rel.getAttribute('Id')] = tgt.indexOf('/') === 0 ? tgt.substring(1) : 'xl/' + tgt;
-      });
-
-      // Find the Information Sheet r:id
-      var tplWbDoc = new DOMParser().parseFromString(tplWbXml, 'application/xml');
-      var infoRid = null;
-      Array.prototype.forEach.call(tplWbDoc.getElementsByTagName('sheet'), function(sheet) {
-        if (sheet.getAttribute('name') === 'Information Sheet') {
-          infoRid = sheet.getAttribute('r:id') ||
-            sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id');
-        }
-      });
-      if (!infoRid || !tplRelMap[infoRid]) {
-        console.error('FE: Cannot find Information Sheet in template');
-        callback(xlsxBytes); return;
+    Promise.all([JSZip.loadAsync(templateBytes), JSZip.loadAsync(xlsxU8)]).then(function(zips) {
+      var tplZip = zips[0], outZip = zips[1];
+      function safeRead(zip, path) {
+        var f = zip.file(path);
+        return f ? f.async('string') : Promise.resolve(null);
       }
 
-      return tplZip.file(tplRelMap[infoRid]).async('string').then(function(rawSheetXml) {
-        // Strip drawing/printer refs that only exist in the template zip
-        var infoSheetXml = rawSheetXml
-          .replace(/<drawing r:id="[^"]*"\/>/g, '')
-          .replace(/<legacyDrawing[^>]*\/>/g, '')
-          .replace(/<picture[^>]*\/>/g, '');
+      return Promise.all([
+        safeRead(tplZip, 'xl/workbook.xml'),
+        safeRead(tplZip, 'xl/_rels/workbook.xml.rels'),
+        safeRead(tplZip, 'xl/styles.xml'),
+        safeRead(tplZip, 'xl/sharedStrings.xml'),
+        safeRead(outZip, 'xl/workbook.xml'),
+        safeRead(outZip, 'xl/_rels/workbook.xml.rels'),
+        safeRead(outZip, '[Content_Types].xml'),
+        safeRead(outZip, 'xl/styles.xml'),
+      ]).then(function(parts) {
+        var tplWbXml = parts[0], tplRelsXml = parts[1], tplStyles = parts[2], tplSstXml = parts[3];
+        var outWbXml = parts[4], outRelsXml = parts[5], outCtXml = parts[6], outStyles = parts[7];
 
-        // Number new sheets after existing ones
-        var outSheetNums = [];
-        Object.keys(outZip.files).forEach(function(name) {
-          var m = name.match(/xl\/worksheets\/sheet(\d+)\.xml/);
-          if (m) outSheetNums.push(parseInt(m[1], 10));
-        });
-        var nextNum = outSheetNums.length ? Math.max.apply(null, outSheetNums) + 1 : 1;
-        var newCtEntries = '';
-        var COMPANY = contractor || '';
-
-        function xmlEsc(s) {
-          return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+        if (!tplWbXml || !tplRelsXml || !tplStyles || !outWbXml || !outRelsXml || !outCtXml || !outStyles) {
+          fallback('missing workbook part'); return;
         }
 
-        // Set a cell to an inline string value.
-        // Handles self-closing form: <c r="A1" s="x"/>
-        // and full form:            <c r="A1" s="x">...</c>
-        function setCellValue(xml, coord, value) {
-          var newCell = '<c r="' + coord + '" t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(value) + '</t></is></c>';
-          var rn = coord.replace(/[A-Z]+/g, '');
-          // Self-closing
-          var sc = new RegExp('<c r="' + coord + '"[^>]*/>');
-          if (sc.test(xml)) return xml.replace(sc, newCell);
-          // Full form
-          var full = new RegExp('<c r="' + coord + '"[^>]*>[\\s\\S]*?<\/c>');
-          if (full.test(xml)) return xml.replace(full, newCell);
-          // Insert at row start as fallback
-          var rowPat = new RegExp('(<row r="' + rn + '"[^>]*>)');
-          if (rowPat.test(xml)) return xml.replace(rowPat, '$1' + newCell);
-          return xml;
-        }
-
-        // Fix Total formula to exclude MLS: SUM(Y13:AJ13) -> SUM(Y13:AG13)
-        function fixTotals(xml) {
-          return xml.replace(/SUM\(Y(\d+):AJ\1\)/g, function(m, n) {
-            return 'SUM(Y' + n + ':AG' + n + ')';
+        // Parse template shared strings
+        var sst = [];
+        if (tplSstXml) {
+          var siList = tplSstXml.match(/<si>[\s\S]*?<\/si>/g) || [];
+          siList.forEach(function(si) {
+            var ts = si.match(/<t[^>]*>([\s\S]*?)<\/t>/g) || [];
+            var combined = ts.map(function(t) {
+              var inner = t.replace(/<t[^>]*>/, '').replace(/<\/t>/, '');
+              return inner;
+            }).join('');
+            sst.push(combined);
           });
         }
 
-        crewOrder.forEach(function(crewNum) {
-          var data = crewMap[crewNum];
-          var xml = infoSheetXml;
+        // === STYLE MERGE: append template styles to output, offset references ===
+        var tplFonts = blockOf(tplStyles, 'fonts'), tplFills = blockOf(tplStyles, 'fills'),
+            tplBorders = blockOf(tplStyles, 'borders'), tplCellxfs = blockOf(tplStyles, 'cellXfs');
+        var outFonts = blockOf(outStyles, 'fonts'), outFills = blockOf(outStyles, 'fills'),
+            outBorders = blockOf(outStyles, 'borders'), outCellxfs = blockOf(outStyles, 'cellXfs');
+        var fontOff = countOf(outFonts, 'font'), fillOff = countOf(outFills, 'fill'),
+            borderOff = countOf(outBorders, 'border'), xfOff = countOf(outCellxfs, 'xf');
 
-          // Header: Company Name in C6 (merged C6:G6)
-          xml = setCellValue(xml, 'C6', COMPANY);
-
-          // Crew Worksheet rows 13-20: Crew No(A), Last(D), First(G), Company(M), Class(T)
-          [13,14,15,16,17,18,19,20].forEach(function(rn, idx) {
-            if (idx >= data.people.length) return;
-            var p = data.people[idx];
-            var nameParts = (p['RESOURCE NAME OR EQUIPMENT ID'] || '').trim().split(' ');
-            var first = nameParts[0] || '', last = nameParts.slice(1).join(' ') || '';
-            xml = setCellValue(xml, 'A' + rn, crewNum);
-            xml = setCellValue(xml, 'D' + rn, last);
-            xml = setCellValue(xml, 'G' + rn, first);
-            xml = setCellValue(xml, 'M' + rn, COMPANY);
-            xml = setCellValue(xml, 'T' + rn, p['CLASSIFICATION'] || '');
-          });
-
-          // Equipment Sheet rows 23-33: Crew No(A), Equip No(D), Equip Type(H)
-          [23,24,25,26,27,28,29,30,31,32,33].forEach(function(rn, idx) {
-            if (idx >= data.equipment.length) return;
-            var eq = data.equipment[idx];
-            xml = setCellValue(xml, 'A' + rn, crewNum);
-            xml = setCellValue(xml, 'D' + rn, eq['RESOURCE NAME OR EQUIPMENT ID'] || '');
-            xml = setCellValue(xml, 'H' + rn, eq['CLASSIFICATION'] || '');
-          });
-
-          xml = fixTotals(xml);
-
-          var fileName = 'xl/worksheets/sheet' + nextNum + '.xml';
-          var rId = 'rId_fe_' + nextNum;
-          var safeName = xmlEsc(crewNum);
-
-          outZip.file(fileName, xml);
-          outWbXml = outWbXml.replace('</sheets>',
-            '<sheet name="' + safeName + '" sheetId="' + (500 + nextNum) + '" r:id="' + rId + '"/></sheets>');
-          outRelsXml = outRelsXml.replace('</Relationships>',
-            '<Relationship Id="' + rId + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + nextNum + '.xml"/></Relationships>');
-          newCtEntries += '<Override PartName="/xl/worksheets/sheet' + nextNum + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
-          nextNum++;
+        var tplCellxfsOff = tplCellxfs.replace(/<xf[ >][\s\S]*?(?:\/>|<\/xf>)/g, function(xf) {
+          xf = xf.replace(/fontId="(\d+)"/, function(m, n){ return 'fontId="' + (parseInt(n,10)+fontOff) + '"'; });
+          xf = xf.replace(/fillId="(\d+)"/, function(m, n){ return 'fillId="' + (parseInt(n,10)+fillOff) + '"'; });
+          xf = xf.replace(/borderId="(\d+)"/, function(m, n){ return 'borderId="' + (parseInt(n,10)+borderOff) + '"'; });
+          return xf;
         });
 
-        if (outWbXml.indexOf('xmlns:r=') < 0) {
-          outWbXml = outWbXml.replace('<workbook ', '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
-        }
-        if (outWbXml.indexOf('calcPr') < 0) {
-          outWbXml = outWbXml.replace('</workbook>', '<calcPr calcId="0" fullCalcOnLoad="1"/></workbook>');
-        }
+        var nf = outFonts + tplFonts, nfi = outFills + tplFills, nb = outBorders + tplBorders, nx = outCellxfs + tplCellxfsOff;
+        var merged = outStyles;
+        merged = merged.replace(/<fonts(?:\s[^>]*)?>[\s\S]*?<\/fonts>/, '<fonts count="' + countOf(nf,'font') + '">' + nf + '</fonts>');
+        merged = merged.replace(/<fills(?:\s[^>]*)?>[\s\S]*?<\/fills>/, '<fills count="' + countOf(nfi,'fill') + '">' + nfi + '</fills>');
+        merged = merged.replace(/<borders(?:\s[^>]*)?>[\s\S]*?<\/borders>/, '<borders count="' + countOf(nb,'border') + '">' + nb + '</borders>');
+        merged = merged.replace(/<cellXfs(?:\s[^>]*)?>[\s\S]*?<\/cellXfs>/, '<cellXfs count="' + countOf(nx,'xf') + '">' + nx + '</cellXfs>');
 
-        outZip.file('xl/workbook.xml', outWbXml);
-        outZip.file('xl/_rels/workbook.xml.rels', outRelsXml);
-        outCtXml = outCtXml.replace('</Types>', newCtEntries + '</Types>');
-        outZip.file('[Content_Types].xml', outCtXml);
+        // === Find Information Sheet path ===
+        var tplRelsDoc = new DOMParser().parseFromString(tplRelsXml, 'application/xml');
+        var tplRelMap = {};
+        Array.prototype.forEach.call(tplRelsDoc.getElementsByTagName('Relationship'), function(rel) {
+          var tgt = rel.getAttribute('Target') || '';
+          tplRelMap[rel.getAttribute('Id')] = tgt.indexOf('/') === 0 ? tgt.substring(1) : 'xl/' + tgt;
+        });
+        var tplWbDoc = new DOMParser().parseFromString(tplWbXml, 'application/xml');
+        var infoRid = null;
+        Array.prototype.forEach.call(tplWbDoc.getElementsByTagName('sheet'), function(sheet) {
+          if (sheet.getAttribute('name') === 'Information Sheet') {
+            infoRid = sheet.getAttribute('r:id') ||
+              sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id');
+          }
+        });
+        if (!infoRid || !tplRelMap[infoRid]) { fallback('Information Sheet not found'); return; }
 
-        return outZip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
+        return safeRead(tplZip, tplRelMap[infoRid]).then(function(rawSheetXml) {
+          if (!rawSheetXml) { fallback('Information Sheet XML empty'); return; }
+
+          // Strip drawing refs
+          var infoSheetXml = rawSheetXml
+            .replace(/<drawing r:id="[^"]*"\/>/g, '')
+            .replace(/<legacyDrawing[^>]*\/>/g, '');
+
+          // Convert shared-string cells (<c .. t="s"><v>N</v></c>) to inline strings
+          infoSheetXml = infoSheetXml.replace(/<c ([^>]*?t="s"[^>]*)><v>(\d+)<\/v><\/c>/g, function(m, attrs, idxStr) {
+            var idx = parseInt(idxStr, 10);
+            var val = (idx < sst.length) ? sst[idx] : '';
+            var attrs2 = attrs.replace(/\s*t="s"/, '');
+            return '<c ' + attrs2 + ' t="inlineStr"><is><t xml:space="preserve">' + val + '</t></is></c>';
+          });
+
+          // Offset all style refs s="N" by xfOff
+          infoSheetXml = infoSheetXml.replace(/s="(\d+)"/g, function(m, n) {
+            return 's="' + (parseInt(n,10) + xfOff) + '"';
+          });
+
+          // Number new sheets
+          var outSheetNums = [];
+          Object.keys(outZip.files).forEach(function(name) {
+            var mm = name.match(/xl\/worksheets\/sheet(\d+)\.xml/);
+            if (mm) outSheetNums.push(parseInt(mm[1], 10));
+          });
+          var nextNum = outSheetNums.length ? Math.max.apply(null, outSheetNums) + 1 : 1;
+          var newCtEntries = '';
+          var COMPANY = contractor || '';
+
+          function setCellValue(xml, coord, value) {
+            var newCell = '<c r="' + coord + '" t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(value) + '</t></is></c>';
+            var rn = coord.replace(/[A-Z]+/g, '');
+            var sc = new RegExp('<c r="' + coord + '"[^>]*/>');
+            if (sc.test(xml)) return xml.replace(sc, newCell);
+            var full = new RegExp('<c r="' + coord + '"[^>]*>[\\s\\S]*?<\/c>');
+            if (full.test(xml)) return xml.replace(full, newCell);
+            var rowPat = new RegExp('(<row r="' + rn + '"[^>]*>)');
+            if (rowPat.test(xml)) return xml.replace(rowPat, '$1' + newCell);
+            return xml;
+          }
+          function fixTotals(xml) {
+            return xml.replace(/SUM\(Y(\d+):AJ\1\)/g, function(m, n) { return 'SUM(Y' + n + ':AG' + n + ')'; });
+          }
+
+          crewOrder.forEach(function(crewNum) {
+            var data = crewMap[crewNum];
+            var xml = infoSheetXml;
+            xml = setCellValue(xml, 'C6', COMPANY);
+            [13,14,15,16,17,18,19,20].forEach(function(rn, idx) {
+              if (idx >= data.people.length) return;
+              var p = data.people[idx];
+              var nameParts = (p['RESOURCE NAME OR EQUIPMENT ID'] || '').trim().split(' ');
+              var first = nameParts[0] || '', last = nameParts.slice(1).join(' ') || '';
+              xml = setCellValue(xml, 'A' + rn, crewNum);
+              xml = setCellValue(xml, 'D' + rn, last);
+              xml = setCellValue(xml, 'G' + rn, first);
+              xml = setCellValue(xml, 'M' + rn, COMPANY);
+              xml = setCellValue(xml, 'T' + rn, p['CLASSIFICATION'] || '');
+            });
+            [23,24,25,26,27,28,29,30,31,32,33].forEach(function(rn, idx) {
+              if (idx >= data.equipment.length) return;
+              var eq = data.equipment[idx];
+              xml = setCellValue(xml, 'A' + rn, crewNum);
+              xml = setCellValue(xml, 'D' + rn, eq['RESOURCE NAME OR EQUIPMENT ID'] || '');
+              xml = setCellValue(xml, 'H' + rn, eq['CLASSIFICATION'] || '');
+            });
+            xml = fixTotals(xml);
+
+            var fileName = 'xl/worksheets/sheet' + nextNum + '.xml';
+            var rId = 'rIdFE' + nextNum;
+            var safeName = xmlEsc(crewNum).substring(0, 31);
+            outZip.file(fileName, xml);
+            outWbXml = outWbXml.replace('</sheets>',
+              '<sheet name="' + safeName + '" sheetId="' + (500 + nextNum) + '" r:id="' + rId + '"/></sheets>');
+            outRelsXml = outRelsXml.replace('</Relationships>',
+              '<Relationship Id="' + rId + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + nextNum + '.xml"/></Relationships>');
+            newCtEntries += '<Override PartName="/xl/worksheets/sheet' + nextNum + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
+            nextNum++;
+          });
+
+          if (outWbXml.indexOf('xmlns:r=') < 0) {
+            outWbXml = outWbXml.replace('<workbook ', '<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ');
+          }
+
+          outZip.file('xl/workbook.xml', outWbXml);
+          outZip.file('xl/_rels/workbook.xml.rels', outRelsXml);
+          outZip.file('xl/styles.xml', merged);
+          outCtXml = outCtXml.replace('</Types>', newCtEntries + '</Types>');
+          outZip.file('[Content_Types].xml', outCtXml);
+
+          return outZip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' }).then(function(finalBytes) {
+            addMsg('system', 'FE Timesheets built: ' + crewOrder.length + ' crew tab(s) added (FirstEnergy format)');
+            finishOK(finalBytes);
+          });
+        });
       });
+    }).catch(function(e) {
+      fallback(e && e.message ? e.message : String(e));
     });
-  }).then(function(finalBytes) {
-    addMsg('system', 'FE Timesheets built: ' + crewOrder.length + ' crew tab(s) added (FirstEnergy format)');
-    callback(finalBytes);
-  }).catch(function(e) {
-    console.error('buildFETimesheets error:', e.message, e.stack || '');
-    addMsg('err', 'FE Timesheet build failed: ' + e.message + ' — falling back to standard format');
-    buildStyledTimesheets(xlsxBytes, rosterRows, contractor, callback);
-  });
+
+  } catch (e) {
+    fallback(e && e.message ? e.message : String(e));
+  }
 }
 
 
