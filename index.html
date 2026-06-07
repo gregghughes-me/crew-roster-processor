@@ -1968,7 +1968,9 @@ function finalize(data, op) {
       setStatus('&#9203;','Building styled timesheets...');
       var tsContractor2 = document.getElementById('qct') ? document.getElementById('qct').value.trim() : '';
       var _co_fe = document.getElementById('qco') ? document.getElementById('qco').value.trim() : '';
-      var _buildTS = /firstenergy|first.energy/i.test(_co_fe) ? buildFETimesheets : buildStyledTimesheets;
+      var _isFE = /firstenergy|first.energy/i.test(_co_fe);
+      console.log('FE check: company="' + _co_fe + '" isFE=' + _isFE);
+      var _buildTS = _isFE ? buildFETimesheets : buildStyledTimesheets;
       _buildTS(bytes, data.roster, tsContractor2, function(finalBytes) {
         showComplete(finalBytes);
       });
@@ -3522,6 +3524,7 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
 
   try {
     if (!window.JSZip) { fallback('JSZip not loaded'); return; }
+    console.log('FE: start, crews about to group');
 
     var crewOrder = [], crewMap = {};
     rosterRows.forEach(function(r) {
@@ -3538,7 +3541,9 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
       : (xlsxBytes instanceof ArrayBuffer) ? new Uint8Array(xlsxBytes)
       : new Uint8Array(xlsxBytes);
 
+    console.log('FE: zips loading, template bytes=' + templateBytes.length);
     Promise.all([JSZip.loadAsync(templateBytes), JSZip.loadAsync(xlsxU8)]).then(function(zips) {
+      console.log('FE: both zips loaded');
       var tplZip = zips[0], outZip = zips[1];
       function safeRead(zip, path) {
         var f = zip.file(path);
@@ -3558,6 +3563,7 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
         var tplWbXml = parts[0], tplRelsXml = parts[1], tplStyles = parts[2], tplSstXml = parts[3];
         var outWbXml = parts[4], outRelsXml = parts[5], outCtXml = parts[6], outStyles = parts[7];
 
+        console.log('FE: parts read. tplStyles=' + (tplStyles?tplStyles.length:'NULL') + ' outStyles=' + (outStyles?outStyles.length:'NULL') + ' sst=' + (tplSstXml?tplSstXml.length:'NULL'));
         if (!tplWbXml || !tplRelsXml || !tplStyles || !outWbXml || !outRelsXml || !outCtXml || !outStyles) {
           fallback('missing workbook part'); return;
         }
@@ -3592,6 +3598,7 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
         });
 
         var nf = outFonts + tplFonts, nfi = outFills + tplFills, nb = outBorders + tplBorders, nx = outCellxfs + tplCellxfsOff;
+        console.log('FE: style offsets font=' + fontOff + ' fill=' + fillOff + ' border=' + borderOff + ' xf=' + xfOff);
         var merged = outStyles;
         merged = merged.replace(/<fonts(?:\s[^>]*)?>[\s\S]*?<\/fonts>/, '<fonts count="' + countOf(nf,'font') + '">' + nf + '</fonts>');
         merged = merged.replace(/<fills(?:\s[^>]*)?>[\s\S]*?<\/fills>/, '<fills count="' + countOf(nfi,'fill') + '">' + nfi + '</fills>');
@@ -3613,9 +3620,11 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
               sheet.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships','id');
           }
         });
+        console.log('FE: infoRid=' + infoRid + ' path=' + tplRelMap[infoRid]);
         if (!infoRid || !tplRelMap[infoRid]) { fallback('Information Sheet not found'); return; }
 
         return safeRead(tplZip, tplRelMap[infoRid]).then(function(rawSheetXml) {
+          console.log('FE: info sheet read, len=' + (rawSheetXml?rawSheetXml.length:'NULL'));
           if (!rawSheetXml) { fallback('Information Sheet XML empty'); return; }
 
           // Strip drawing refs
@@ -3661,6 +3670,7 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
             return xml.replace(/SUM\(Y(\d+):AJ\1\)/g, function(m, n) { return 'SUM(Y' + n + ':AG' + n + ')'; });
           }
 
+          console.log('FE: building ' + crewOrder.length + ' crew sheets');
           crewOrder.forEach(function(crewNum) {
             var data = crewMap[crewNum];
             var xml = infoSheetXml;
@@ -3707,7 +3717,9 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
           outCtXml = outCtXml.replace('</Types>', newCtEntries + '</Types>');
           outZip.file('[Content_Types].xml', outCtXml);
 
+          console.log('FE: all sheets built, calling generateAsync');
           return outZip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' }).then(function(finalBytes) {
+            console.log('FE: generateAsync done, bytes=' + finalBytes.byteLength);
             addMsg('system', 'FE Timesheets built: ' + crewOrder.length + ' crew tab(s) added (FirstEnergy format)');
             finishOK(finalBytes);
           });
