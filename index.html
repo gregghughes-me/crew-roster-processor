@@ -3652,6 +3652,19 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
           // so it can never resolve against a missing relationship part.
           infoSheetXml = infoSheetXml.replace(/\sr:id="[^"]*"/g, '');
 
+          // Normalize the view inherited from the template's "Information Sheet":
+          //  - view="pageBreakPreview" overlays a "Page 1" watermark on every sheet
+          //  - zoomScale="40" makes all the data look tiny (it's display zoom, not font)
+          // Drop the page-break-preview mode (-> normal view) and reset zoom to 100%.
+          infoSheetXml = infoSheetXml.replace(/<sheetView\b[^>]*>/g, function(tag) {
+            return tag
+              .replace(/\sview="pageBreakPreview"/g, '')
+              .replace(/\szoomScale="\d+"/g, '')
+              .replace(/\szoomScaleNormal="\d+"/g, '')
+              .replace(/\szoomScaleSheetLayoutView="\d+"/g, '')
+              .replace(/\szoomScalePageLayoutView="\d+"/g, '');
+          });
+
           // Strip cell-metadata references (vm="N" value-metadata, cm="N" cell-metadata).
           // The template's A1 is a dynamic-array formula cell flagged vm="1"; once its
           // <f> is removed it becomes a t="e" #VALUE! cell that still CLAIMS to be a
