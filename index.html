@@ -3624,10 +3624,34 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
           console.log('FE: info sheet read, len=' + (rawSheetXml?rawSheetXml.length:'NULL'));
           if (!rawSheetXml) { fallback('Information Sheet XML empty'); return; }
 
-          // Strip drawing refs
+          // Strip EVERY element that carries an r:id or points at an external part.
+          // The cloned sheet does not get its own _rels file, so any surviving
+          // relationship reference (drawing, hyperlink, OLE object, picture,
+          // table part, control, etc.) is a dangling reference that corrupts the
+          // entire workbook -> Excel "we found a problem with some content".
           var infoSheetXml = rawSheetXml
-            .replace(/<drawing r:id="[^"]*"\/>/g, '')
-            .replace(/<legacyDrawing[^>]*\/>/g, '');
+            // self-closing relationship elements: <drawing r:id="..."/>, <picture r:id=".."/>, etc.
+            .replace(/<(drawing|legacyDrawing|picture|oleObject|control|tablePart)\b[^>]*\/>/g, '')
+            // paired containers that hold r:id children
+            .replace(/<drawing\b[^>]*>[\s\S]*?<\/drawing>/g, '')
+            .replace(/<legacyDrawing\b[^>]*>[\s\S]*?<\/legacyDrawing>/g, '')
+            .replace(/<tableParts\b[^>]*>[\s\S]*?<\/tableParts>/g, '')
+            .replace(/<tableParts\b[^>]*\/>/g, '')
+            .replace(/<oleObjects\b[^>]*>[\s\S]*?<\/oleObjects>/g, '')
+            .replace(/<controls\b[^>]*>[\s\S]*?<\/controls>/g, '')
+            .replace(/<picture\b[^>]*>[\s\S]*?<\/picture>/g, '')
+            // hyperlinks reference rels via r:id
+            .replace(/<hyperlinks\b[^>]*>[\s\S]*?<\/hyperlinks>/g, '')
+            .replace(/<hyperlink\b[^>]*\/>/g, '')
+            .replace(/<hyperlink\b[^>]*>[\s\S]*?<\/hyperlink>/g, '')
+            // alternate-content blocks (mc:AlternateContent) often wrap drawings/controls
+            .replace(/<mc:AlternateContent\b[^>]*>[\s\S]*?<\/mc:AlternateContent>/g, '')
+            // extension lists can hold conditional-formatting/data-validation rel refs
+            .replace(/<extLst\b[^>]*>[\s\S]*?<\/extLst>/g, '');
+          // Final safety net: if any r:id attribute survives anywhere, neutralize it
+          // so it can never resolve against a missing relationship part.
+          infoSheetXml = infoSheetXml.replace(/\sr:id="[^"]*"/g, '');
+
 
           // Convert EVERY shared-string cell to an inline string, regardless of
           // attribute order, whitespace, or whether the cell is empty/self-closing.
@@ -3734,6 +3758,31 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
           }
 
           console.log('FE: building ' + crewOrder.length + ' crew sheets');
+          // Track sheet names already present in the output workbook so the new
+          // crew tabs never collide (duplicate names corrupt the whole workbook).
+          var usedNames = {};
+          (outWbXml.match(/<sheet\b[^>]*\bname="([^"]*)"/g) || []).forEach(function(s) {
+            var nm = (s.match(/name="([^"]*)"/) || [,''])[1].toLowerCase();
+            usedNames[nm] = true;
+          });
+          function makeSheetName(raw) {
+            // Excel sheet-name rules: max 31 chars, cannot contain : \ / ? * [ ],
+            // cannot be blank, must be unique (case-insensitive).
+            var base = String(raw == null ? '' : raw)
+              .replace(/[:\\\/?*\[\]]/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim()
+              .substring(0, 31);
+            if (!base) base = 'Crew';
+            var candidate = base, i = 2;
+            while (usedNames[candidate.toLowerCase()]) {
+              var suffix = ' (' + i + ')';
+              candidate = base.substring(0, 31 - suffix.length) + suffix;
+              i++;
+            }
+            usedNames[candidate.toLowerCase()] = true;
+            return candidate;
+          }
           crewOrder.forEach(function(crewNum) {
             var data = crewMap[crewNum];
             var xml = infoSheetXml;
@@ -3760,7 +3809,7 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
 
             var fileName = 'xl/worksheets/sheet' + nextNum + '.xml';
             var rId = 'rIdFE' + nextNum;
-            var safeName = xmlEsc(crewNum).substring(0, 31);
+            var safeName = xmlEsc(makeSheetName(crewNum)).replace(/"/g, '&quot;');
             outZip.file(fileName, xml);
             outWbXml = outWbXml.replace('</sheets>',
               '<sheet name="' + safeName + '" sheetId="' + (500 + nextNum) + '" r:id="' + rId + '"/></sheets>');
