@@ -1072,10 +1072,25 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
           // ── Strategy 4: blank-row group detection ──
           // When crews are separated by blank rows (no time sheet headers, no crew# col),
           // each non-empty block is one crew. Support pockets are merged.
-          // Detect: multiple blank rows interspersed with data blocks.
+          // Detect: multiple blank rows AND those blanks actually separate data into multiple groups.
+          // (Trailing blank rows at the end of the sheet don't count as separators.)
           var blankCount = dataRows.filter(function(rr){ return rr.nonEmpty.length === 0; }).length;
           var nonBlankCount = dataRows.filter(function(rr){ return rr.nonEmpty.length >= 2; }).length;
-          var hasBlankSeparators = blankCount >= 2 && blankCount < nonBlankCount;
+          // Count blanks that actually appear BETWEEN data rows (not just trailing).
+          var interspersedBlanks = 0;
+          var sawData = false, pendingBlanks = 0;
+          dataRows.forEach(function(rr) {
+            if (rr.nonEmpty.length === 0) {
+              if (sawData) pendingBlanks++;
+            } else if (rr.nonEmpty.length >= 2) {
+              // Data row appeared after blanks — those blanks were true separators
+              interspersedBlanks += pendingBlanks;
+              pendingBlanks = 0;
+              sawData = true;
+            }
+          });
+          // Don't count `pendingBlanks` — they were trailing and never followed by data.
+          var hasBlankSeparators = interspersedBlanks >= 2 && interspersedBlanks < nonBlankCount;
 
           // Also need a classification col to identify support rows
           var classColIdx = -1;
