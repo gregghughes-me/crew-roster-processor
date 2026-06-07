@@ -3060,6 +3060,48 @@ function deriveTabsFromRoster(roster, op, hasArcosTypes) {
   var result = { arcos_employees:[], arcos_vehicles:[], arcos_equipment:[], arcos_crews:[], storm_manager:[] };
   if (!roster || !roster.length) return result;
 
+  // ── EXACT lookup: CLASSIFICATION (col A) → ARCOS RESOURCE TYPES (col C) ──
+  // The client's CLASSIFICATIONS tab is the authoritative source for mapping a
+  // person's classification to the ARCOS Resource Type. Build that map straight
+  // from the uploaded workbook so the ARCOS Employees / Crews resource-type
+  // columns use the exact tab value (e.g. "Journeyman Lineman" -> "Distribution
+  // Line Worker", "Foreman" -> "Distribution Line Crew Leader"). The keyword
+  // heuristic below is only a fallback for classifications not found in the tab.
+  var arcosTypeMap = {};   // lowercased classification -> ARCOS resource type
+  try {
+    if (typeof clientBuf !== 'undefined' && clientBuf && typeof XLSX !== 'undefined') {
+      var _cwb = XLSX.read(clientBuf, { type: 'array' });
+      var _cs = _cwb.Sheets['CLASSIFICATIONS'];
+      if (_cs) {
+        var _rng = XLSX.utils.decode_range(_cs['!ref']);
+        var _classCol = -1, _arcosCol = -1;
+        for (var _c = _rng.s.c; _c <= _rng.e.c; _c++) {
+          var _h = _cs[XLSX.utils.encode_cell({ r: _rng.s.r, c: _c })];
+          var _hl = (_h && _h.v ? String(_h.v) : '').trim().toUpperCase();
+          if (_hl === 'CLASSIFICATION' || _hl === 'CLASSIFICATIONS') _classCol = _c;
+          if (_hl.indexOf('ARCOS') >= 0) _arcosCol = _c;
+        }
+        if (_classCol >= 0 && _arcosCol >= 0) {
+          for (var _r = _rng.s.r + 1; _r <= _rng.e.r; _r++) {
+            var _cv = _cs[XLSX.utils.encode_cell({ r: _r, c: _classCol })];
+            var _av = _cs[XLSX.utils.encode_cell({ r: _r, c: _arcosCol })];
+            var _ck = _cv && _cv.v != null ? String(_cv.v).trim() : '';
+            var _ak = _av && _av.v != null ? String(_av.v).trim() : '';
+            if (_ck && _ak) arcosTypeMap[_ck.toLowerCase()] = _ak;
+          }
+        }
+      }
+    }
+  } catch (e) { /* fall back to heuristic */ }
+
+  // Resolve a classification to its ARCOS Resource Type: prefer the exact
+  // CLASSIFICATIONS-tab value, fall back to the keyword heuristic.
+  function arcosResourceType(cls) {
+    var key = (cls || '').trim().toLowerCase();
+    if (key && arcosTypeMap[key]) return arcosTypeMap[key];
+    return arcosCrewResourceType(cls);
+  }
+
   // ── Classification → ARCOS Crews Resource Type ──
   function arcosCrewResourceType(cls) {
     var c = (cls || '').toLowerCase();
@@ -3156,8 +3198,8 @@ function deriveTabsFromRoster(roster, op, hasArcosTypes) {
         'Gender':          gender,
         'Team Lead':       teamLd,
         'Crew Lead':       crewLd,
-        'Resource Types':  hasArcosTypes ? cls : '',
-        'Resource Types 2': cls,
+        'Resource Types':  arcosResourceType(cls),
+        'Resource Types 2': arcosResourceType(cls),
         'Resource Types 3': '',
         'Status':          ''
       });
@@ -3190,7 +3232,7 @@ function deriveTabsFromRoster(roster, op, hasArcosTypes) {
         'Crew Name':      crew,
         'Location':       locParsed.loc,
         'Resource Group': 'Distribution Line',
-        'Resource Type':  arcosCrewResourceType(cls),
+        'Resource Type':  arcosResourceType(cls),
         'Named Resource': name,
         'Team Lead':      teamLd,
         'Crew Lead':      crewLd
