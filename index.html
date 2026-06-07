@@ -3652,6 +3652,27 @@ function buildFETimesheets(xlsxBytes, rosterRows, contractor, callback) {
           // so it can never resolve against a missing relationship part.
           infoSheetXml = infoSheetXml.replace(/\sr:id="[^"]*"/g, '');
 
+          // Strip cell-metadata references (vm="N" value-metadata, cm="N" cell-metadata).
+          // The template's A1 is a dynamic-array formula cell flagged vm="1"; once its
+          // <f> is removed it becomes a t="e" #VALUE! cell that still CLAIMS to be a
+          // dynamic-array anchor. A vm/cm reference with no backing formula is the
+          // inconsistency Excel repairs as "Cell information" — drop these refs.
+          infoSheetXml = infoSheetXml.replace(/(<c\b[^>]*?)\s(?:vm|cm)="\d+"/g, '$1');
+          // Some cells carry both; run twice to catch a second attribute on the same tag.
+          infoSheetXml = infoSheetXml.replace(/(<c\b[^>]*?)\s(?:vm|cm)="\d+"/g, '$1');
+
+          // Neutralize error cells (t="e", e.g. cached #VALUE!/#REF!). With their
+          // formula stripped these are stale; convert to a clean empty inline string
+          // so no error value or dangling dynamic-array claim reaches the output.
+          infoSheetXml = infoSheetXml.replace(
+            /<c\b([^>]*?)\bt="e"([^>]*?)(\/>|>[\s\S]*?<\/c>)/g,
+            function(m, pre, post, tail) {
+              var attrs = (pre + post).replace(/\s+/g, ' ').trim();
+              attrs = attrs ? ' ' + attrs : '';
+              return '<c' + attrs + ' t="inlineStr"><is><t xml:space="preserve"></t></is></c>';
+            }
+          );
+
 
           // Convert EVERY shared-string cell to an inline string, regardless of
           // attribute order, whitespace, or whether the cell is empty/self-closing.
