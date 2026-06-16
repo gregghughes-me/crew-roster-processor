@@ -933,58 +933,40 @@ function xlsxToCrewChunks(contractorFiles, clientTxt) {
       }
 
       if (hasMergedSideLabels) {
-        // ── Strategy 1b: section-label crews ──
-        // Handles TWO layouts that both put crew labels in column A:
-        //   (a) standalone header rows — col A holds "CREW 1"/"Support" and the rest of
-        //       the row is empty; the person rows that follow have real data in col A
-        //       (e.g. First Name). This is the common contractor "section header" format.
-        //   (b) merged side-labels — col A label sits on the same row as the first member.
-        // The label rows are recorded in sideLabels by index, so we switch crews whenever
-        // we reach one. Critically, we must NOT pre-filter label rows out by nonEmpty count
-        // (a standalone "CREW 1" row has only 1 non-empty cell) or the boundary is lost and
-        // every crew collapses into one chunk.
-        //
-        // Any data rows that appear BEFORE the first label are captured as their own
-        // SUPPORT crew (e.g. a General Foreman + Operator listed above "CREW 1").
-        var labelIdxSet = {};
-        sideLabels.forEach(function(sl){ labelIdxSet[sl.rowIdx] = sl.label; });
-
-        var currentLabel2 = null;   // null until we hit the first label row
+        // ── Strategy 1b: merged side-label sections ──
+        // Split on each side-label row; all rows until next label belong to that crew
+        var currentLabel2 = sideLabels.length > 0 ? sideLabels[0].label : 'Crew 1';
         var currentRows2 = [];
+        var nextLabelIdx = 0;
 
         function flushSideLabel() {
           if (currentRows2.length === 0) return;
-          var lbl = currentLabel2 || 'Support';
-          // Tag pre-label / support-named sections so downstream gives them the -SUPPORT suffix.
-          // (Skip the tag if the label itself already says Support, to avoid "Support / Support".)
-          var isSup = /^(sup|support|gf|gen(eral)?\s*foreman|mgmt|management|admin|office|hq)\b/i.test(lbl);
-          var supTag = (isSup && !/support/i.test(lbl)) ? ' / Support' : '';
           var lines = [headerLine].concat(currentRows2.map(function(r){ return r.join('\t'); }));
-          allChunks.push({ label: f.name+' / '+lbl+supTag, text: '=== FILE: '+f.name+' | '+lbl+' ===\n'+lines.join('\n') });
+          allChunks.push({ label: f.name+' / '+currentLabel2, text: '=== FILE: '+f.name+' | '+currentLabel2+' ===\n'+lines.join('\n') });
           currentRows2 = [];
         }
 
         rawRows.forEach(function(rr, idx) {
-          if (idx <= headerRowIdx || rr.isTimeSheet) return;
-
-          // Section-label row? Switch crews. Do this BEFORE any nonEmpty filtering so that
-          // standalone single-cell "CREW n" rows are never dropped.
-          if (labelIdxSet.hasOwnProperty(idx)) {
-            // Determine if this label row ALSO carries member data (merged layout).
-            var rowVals = rr.values.slice();
-            var afterLabel = rowVals.slice(1).filter(function(v){ return v; });
-            flushSideLabel();                 // close out the previous crew (incl. pre-label support)
-            currentLabel2 = labelIdxSet[idx];
-            if (afterLabel.length >= 2) {
-              // Merged layout: the rest of this row is the first member — keep it (minus label col).
-              currentRows2.push(rowVals.slice(1));
-            }
-            return;
+          if (idx <= headerRowIdx || rr.nonEmpty.length < 2) return;
+          // Check if this row starts a new section
+          var isSectionStart = sideLabels.some(function(sl){ return sl.rowIdx === idx; });
+          if (isSectionStart && currentRows2.length > 0) {
+            flushSideLabel();
+            // Find the label for this row
+            var sl = sideLabels.filter(function(s){ return s.rowIdx === idx; })[0];
+            currentLabel2 = sl ? sl.label : currentLabel2;
+          } else if (isSectionStart) {
+            var sl2 = sideLabels.filter(function(s){ return s.rowIdx === idx; })[0];
+            if (sl2) currentLabel2 = sl2.label;
           }
-
-          // Regular data row. Standalone-header layout keeps col A (it's the First Name).
-          if (rr.nonEmpty.length < 2) return;
-          currentRows2.push(rr.values.slice());
+          // Include row but strip the col A section label so it doesn't confuse the model
+          var rowVals = rr.values.slice();
+          if (rowVals[0] && /^(crew\s*\d*|support|group\s*\d*)/i.test(String(rowVals[0]))) {
+            rowVals = rowVals.slice(1); // remove side label col
+          }
+          if (rowVals.filter(function(v){ return v; }).length >= 2) {
+            currentRows2.push(rowVals);
+          }
         });
         flushSideLabel();
 
@@ -1366,7 +1348,7 @@ var SYSTEM_PROMPT = [
 'ARCOS VEHICLES KEYS: "Resource Name","Resource Type","License Plate","State/Province","CREW NUMBER",Location',
 'ARCOS VEHICLES: ALL motorized/drivable equipment belongs here — Pickups, Bucket Trucks, Material Handlers, Digger Derricks, Line Trucks, Mechanic Trucks, Dump Trucks, and any other self-propelled vehicle.',
 'ARCOS EQUIPMENT KEYS: "Resource Name","Resource Type","CREW NUMBER",Location',
-'ARCOS EQUIPMENT: ONLY non-motorized, non-drivable items — Trailers, Carts, Back Yard Machines, Flex Track, and similar towed or stationary equipment. If it has an engine or drives on a road → Vehicles. If it is towed or stationary → Equipment.',
+'ARCOS EQUIPMENT: ONLY non-motorized, non-drivable items — Trailers, Carts, Back Yard Machines, Rear Lot Machines, Flex Track, and similar towed or stationary equipment. If it has an engine or drives on a road → Vehicles. If it is towed or stationary (including Back Yard Machines and Rear Lot Machines) → Equipment.',
 'ARCOS CREWS KEYS: "Crew Name","Location","Resource Group","Resource Type","Named Resource","Team Lead","Crew Lead"',
 'ARCOS CREWS RULES: One row per resource (person or equipment) matching the roster. Crew Name = CREW NUMBER (e.g. PREFIX-001). Location = that resource location (city/state). Resource Group = "Distribution Line". Resource Type (ARCOS ONLY): General Foreman->Distribution Line Resource Strike Team Leader, Foreman->Distribution Line Crew Leader, JL/Groundman/EO->Distribution Line Worker, Mechanic->Fleet Mechanic, Safety->Safety, Bucket Truck->Material Handler - (4WD), Digger Derrick->Digger Derrick - (4WD), Pickup->Pick-up (4WD), Mechanic Truck->Fleet Mechanic Truck. Named Resource = that person or equipment name/ID. Team Lead = "Yes" for General Foreman row only. Crew Lead = "Yes" for Foreman row only.',
 'STORM MANAGER KEYS: "Crew ID","First Name","Last Name",Classification,"Resource Type",Gender,"Crew Request Lodging","Equipment ID","License Plate","License State","Equipment Type","Equipment Sub Type"',
@@ -3176,7 +3158,7 @@ function deriveTabsFromRoster(roster, op, hasArcosTypes) {
   function isVehicle(cls) {
     var c = (cls || '').toLowerCase();
     // Towed/stationary → Equipment
-    if (c.indexOf('trailer') >= 0 || c.indexOf('backyard') >= 0 || c.indexOf('back yard') >= 0 || c.indexOf('cart') >= 0 || c.indexOf('flex track') >= 0) return false;
+    if (c.indexOf('trailer') >= 0 || c.indexOf('backyard') >= 0 || c.indexOf('back yard') >= 0 || /\bbym\b/.test(c) || c.indexOf('rear lot') >= 0 || c.indexOf('rear-lot') >= 0 || c.indexOf('cart') >= 0 || c.indexOf('flex track') >= 0) return false;
     // Everything else with an engine → Vehicle
     return true;
   }
