@@ -1991,32 +1991,57 @@ function finalize(data, op) {
   var rc=(data.roster||[]).length, cc=countCrews(data.roster);
   var tsCount = (data.roster||[]).filter(function(r){ return r['CREW NUMBER']; }).length > 0 && document.getElementById('qts') && document.getElementById('qts').value === 'yes';
 
-  var bytes;
-  try {
-    bytes = buildXlsx(data, op);
-    console.log('buildXlsx success, byteLength:', bytes ? bytes.byteLength : 'N/A');
+  // Crew make-up compliance check (read-only) — runs before building so the
+  // result can be written into a COMPLIANCE tab. Never blocks the build:
+  // if it fails or there are no rules, data.compliance stays null.
+  var _makeupText = '';
+  try { _makeupText = extractCrewMakeupText(); } catch(e) { _makeupText = ''; }
 
-    // SheetJS builds clean XML with correct namespaces
-    var doTs = document.getElementById('qts') && document.getElementById('qts').value === 'yes';
-    if (doTs && data.roster && data.roster.length > 0) {
-      // Inject styled timesheet sheets via JSZip post-processing
-      setStatus('&#9203;','Building styled timesheets...');
-      var tsContractor2 = document.getElementById('qct') ? document.getElementById('qct').value.trim() : '';
-      var _co_fe = document.getElementById('qco') ? document.getElementById('qco').value.trim() : '';
-      var _isFE = /firstenergy|first.energy/i.test(_co_fe);
-      console.log('FE check: company="' + _co_fe + '" isFE=' + _isFE);
-      var _buildTS = _isFE ? buildFETimesheets : buildStyledTimesheets;
-      _buildTS(bytes, data.roster, tsContractor2, function(finalBytes) {
-        showComplete(finalBytes);
-      });
-    } else {
-      showComplete(bytes);
+  function buildAndFinish() {
+    var bytes;
+    try {
+      bytes = buildXlsx(data, op);
+      console.log('buildXlsx success, byteLength:', bytes ? bytes.byteLength : 'N/A');
+
+      // SheetJS builds clean XML with correct namespaces
+      var doTs = document.getElementById('qts') && document.getElementById('qts').value === 'yes';
+      if (doTs && data.roster && data.roster.length > 0) {
+        // Inject styled timesheet sheets via JSZip post-processing
+        setStatus('&#9203;','Building styled timesheets...');
+        var tsContractor2 = document.getElementById('qct') ? document.getElementById('qct').value.trim() : '';
+        var _co_fe = document.getElementById('qco') ? document.getElementById('qco').value.trim() : '';
+        var _isFE = /firstenergy|first.energy/i.test(_co_fe);
+        console.log('FE check: company="' + _co_fe + '" isFE=' + _isFE);
+        var _buildTS = _isFE ? buildFETimesheets : buildStyledTimesheets;
+        _buildTS(bytes, data.roster, tsContractor2, function(finalBytes) {
+          showComplete(finalBytes);
+        });
+      } else {
+        showComplete(bytes);
+      }
+    } catch(e) {
+      console.error('buildXlsx error:', e);
+      addMsg('err', 'Error building workbook: ' + e.message);
+      busy=false; setBusy(false);
     }
+  }
+
+  if (_makeupText) {
+    setStatus('&#9203;','Checking crew make-up against client requirements...');
+    runComplianceCheck(data.roster, _makeupText)
+      .then(function(result) {
+        data.compliance = result; // may be null on failure
+        if (result) {
+          var rev = (result.crews||[]).filter(function(c){ return c.status === 'DOES NOT COMPLY'; }).length;
+          addMsg('system', 'Crew make-up check: ' + (result.overall === 'PASS' ? 'all crews comply' : (rev + ' crew(s) flagged for review')));
+        }
+        buildAndFinish();
+      })
+      .catch(function() { data.compliance = null; buildAndFinish(); });
     return;
-  } catch(e) {
-    console.error('buildXlsx error:', e);
-    addMsg('err', 'Error building workbook: ' + e.message);
-    busy=false; setBusy(false);
+  } else {
+    data.compliance = null;
+    buildAndFinish();
     return;
   }
 
@@ -2054,7 +2079,10 @@ function finalize(data, op) {
 }
 
 // ── API CALL ──
-function callAPI(msgs) {
+// systemOverride (optional): when provided, used as the system prompt verbatim
+// instead of the default roster-processing SYSTEM_PROMPT. Used by the
+// compliance checker so it doesn't inherit roster-processing instructions.
+function callAPI(msgs, systemOverride) {
   // Race the fetch against a 90-second timeout
   var timeoutPromise = new Promise(function(_, reject) {
     setTimeout(function() {
@@ -2062,16 +2090,20 @@ function callAPI(msgs) {
     }, 90000);
   });
 
+  var sysPrompt = systemOverride != null
+    ? systemOverride
+    : SYSTEM_PROMPT.replace('[[ARCOS_RT_INSTRUCTION]]',
+        (typeof hasArcosTypes !== 'undefined' && hasArcosTypes)
+          ? 'ARCOS EMPLOYEES "Resource Types" column: populate with the value from the ARCOS RESOURCE TYPES column in the CLASSIFICATIONS tab that matches this person\'s role.'
+          : 'ARCOS EMPLOYEES "Resource Types" column: leave empty — this client does not use ARCOS Resource Types.');
+
   var fetchPromise = fetch('https://crew-roster-proxy.gregg-8ac.workers.dev', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify({
       model:'claude-sonnet-4-6',
       max_tokens:16000,
-      system: SYSTEM_PROMPT.replace('[[ARCOS_RT_INSTRUCTION]]',
-        (typeof hasArcosTypes !== 'undefined' && hasArcosTypes)
-          ? 'ARCOS EMPLOYEES "Resource Types" column: populate with the value from the ARCOS RESOURCE TYPES column in the CLASSIFICATIONS tab that matches this person\'s role.'
-          : 'ARCOS EMPLOYEES "Resource Types" column: leave empty — this client does not use ARCOS Resource Types.'),
+      system: sysPrompt,
       messages: msgs
     })
   })
@@ -3297,6 +3329,85 @@ function deriveTabsFromRoster(roster, op, hasArcosTypes) {
   return result;
 }
 
+// ── CREW MAKE-UP COMPLIANCE ──
+// Reads the free-text "CREW MAKE UP" rule(s) from the client's CLASSIFICATIONS
+// tab. Read-only: never alters roster processing.
+function extractCrewMakeupText() {
+  if (!clientBuf) return '';
+  var cwb;
+  try { cwb = XLSX.read(clientBuf, {type:'array'}); } catch(e) { return ''; }
+  var cs = cwb.Sheets['CLASSIFICATIONS'];
+  if (!cs || !cs['!ref']) return '';
+  var rng = XLSX.utils.decode_range(cs['!ref']);
+  var makeupCol = -1;
+  for (var c = rng.s.c; c <= rng.e.c; c++) {
+    var h = cs[XLSX.utils.encode_cell({r: rng.s.r, c: c})];
+    var hl = h && h.v ? String(h.v).toUpperCase().replace(/[^A-Z]/g, '') : '';
+    if (hl.indexOf('CREWMAKEUP') >= 0 || hl.indexOf('MAKEUP') >= 0) { makeupCol = c; break; }
+  }
+  if (makeupCol < 0) return '';
+  var parts = [];
+  for (var r = rng.s.r + 1; r <= rng.e.r; r++) {
+    var cell = cs[XLSX.utils.encode_cell({r: r, c: makeupCol})];
+    var v = cell && cell.v ? String(cell.v).trim() : '';
+    if (v) parts.push(v);
+  }
+  return parts.join('\n').trim();
+}
+
+// Builds a compact per-crew make-up snapshot from the COMPLETED roster.
+// Read-only summary of what was produced; processing is untouched.
+function assembleCrewsForCompliance(roster) {
+  var crews = {};
+  (roster || []).forEach(function(r) {
+    var cn = (r['CREW NUMBER'] || '').trim();
+    if (!cn) return;
+    if (!crews[cn]) crews[cn] = { crew_number: cn, personnel: [], equipment: [] };
+    var name = r['RESOURCE NAME OR EQUIPMENT ID'] || '';
+    var cls = (r['CLASSIFICATION'] || '').trim();
+    if (r['RESOURCE / EQUIPMENT'] === 'EQUIPMENT') {
+      crews[cn].equipment.push(cls || name);
+    } else if (r['RESOURCE / EQUIPMENT'] === 'RESOURCE') {
+      crews[cn].personnel.push(cls || name);
+    }
+  });
+  return Object.keys(crews).map(function(cn) {
+    var c = crews[cn];
+    return {
+      crew_number: c.crew_number,
+      is_support: cn.toUpperCase().indexOf('SUPPORT') >= 0,
+      personnel_count: c.personnel.length,
+      equipment_count: c.equipment.length,
+      personnel: c.personnel,
+      equipment: c.equipment
+    };
+  });
+}
+
+// Asks Claude to judge each completed crew against the free-text make-up rules.
+// Returns a Promise resolving to an array of per-crew verdict objects.
+// On any failure, resolves to null so the build proceeds without blocking.
+function runComplianceCheck(roster, makeupText) {
+  var crews = assembleCrewsForCompliance(roster);
+  if (!makeupText || crews.length === 0) return Promise.resolve(null);
+
+  var sys = 'You are a utility storm-response crew compliance checker. You are given (1) a client\'s free-text crew make-up requirements and (2) a list of already-assembled crews with their personnel classifications and equipment. Your ONLY job is to judge whether each crew satisfies the client requirements. Do NOT suggest changes to the roster or reassign anyone. Many requirements describe several ACCEPTABLE crew templates (e.g. a 2-man, 3-man, or 5-man crew); a crew COMPLIES if it matches ANY one acceptable template. Support crews (is_support=true) are staging/support pools and are generally exempt from line-crew composition rules unless the requirements explicitly state otherwise — mark those "N/A" with a short note. Treat any listed "qualified" classification list as the set of roles that count toward "qualified line worker" type requirements. Respond with ONLY a JSON object, no prose, no markdown fences, in this exact shape: {"overall":"PASS"|"REVIEW","summary":"one sentence","crews":[{"crew_number":"...","status":"COMPLIES"|"DOES NOT COMPLY"|"N/A","matched_template":"name or empty","reason":"short explanation"}]}. Use status "REVIEW" at overall level if ANY non-support crew does not comply.';
+
+  var userMsg = 'CLIENT CREW MAKE-UP REQUIREMENTS:\n' + makeupText +
+    '\n\nASSEMBLED CREWS (already completed — judge only):\n' +
+    JSON.stringify(crews, null, 1);
+
+  return callAPI([{role:'user', content: userMsg}], sys)
+    .then(function(raw) {
+      try {
+        var parsed = parseJSON(raw);
+        if (parsed && parsed.crews) return parsed;
+      } catch(e) {}
+      return null;
+    })
+    .catch(function() { return null; });
+}
+
 // ── BUILD XLSX ──
 function buildXlsx(data, op) {
   var wb;
@@ -3470,8 +3581,31 @@ function buildXlsx(data, op) {
   if(si>=0) wb.Sheets['PROCESSING SUMMARY']=sumSheet;
   else XLSX.utils.book_append_sheet(wb,sumSheet,'PROCESSING SUMMARY');
 
+  // ── CREW MAKE-UP COMPLIANCE ──
+  // Read-only assessment of the completed roster against the client's
+  // CREW MAKE UP requirements. Only written when a check actually ran.
+  var comp = data.compliance;
+  if (comp && comp.crews) {
+    var compRows = [];
+    compRows.push(['CREW MAKE-UP COMPLIANCE']);
+    compRows.push(['Overall', comp.overall === 'PASS' ? 'PASS — all crews comply' : 'REVIEW — see flagged crews']);
+    if (comp.summary) compRows.push(['Summary', comp.summary]);
+    compRows.push(['']);
+    compRows.push(['Source: client CLASSIFICATIONS tab, CREW MAKE UP column. This check evaluates the completed roster only — it does not change any assignments.']);
+    compRows.push(['']);
+    compRows.push(['Crew','Status','Matched Template','Reason']);
+    (comp.crews||[]).forEach(function(c){
+      compRows.push([c.crew_number||'', c.status||'', c.matched_template||'', c.reason||'']);
+    });
+    var compSheet = XLSX.utils.aoa_to_sheet(compRows);
+    compSheet['!cols']=[{wch:16},{wch:18},{wch:26},{wch:70}];
+    var ci=wb.SheetNames.indexOf('COMPLIANCE');
+    if(ci>=0) wb.Sheets['COMPLIANCE']=compSheet;
+    else XLSX.utils.book_append_sheet(wb,compSheet,'COMPLIANCE');
+  }
+
   // Sheet order — TS- timesheet tabs sort after PROCESSING SUMMARY
-  var order=['ROSTER','CLASSIFICATIONS','ARCOS Employees','ARCOS Vehicles','ARCOS Equipment','ARCOS Crews','STORM MANAGER ROSTER','PROCESSING SUMMARY'];
+  var order=['ROSTER','CLASSIFICATIONS','ARCOS Employees','ARCOS Vehicles','ARCOS Equipment','ARCOS Crews','STORM MANAGER ROSTER','PROCESSING SUMMARY','COMPLIANCE'];
   wb.SheetNames.sort(function(a,b){
     var isA_ts = a.indexOf('TS-') === 0, isB_ts = b.indexOf('TS-') === 0;
     if (isA_ts && isB_ts) return 0; // preserve TS- tab order
